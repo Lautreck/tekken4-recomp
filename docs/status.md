@@ -10,11 +10,15 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   ps2xRuntime** (cherry-pick from the GoW fork at GS/VU1 time). ps2EntryRunner builds and runs; first stop found
   (see "First run"); 350 missing functions added (4 constructors + 346 vtable/callback targets) (see "Missing
   functions fix"); silent sound-driver override (see "Sound driver override"); MFIFO + D_ENABLE runtime
-  patch (see "MFIFO + D_ENABLE patch"). **The game now runs its main loop at ~47 fps but shows only a grey
-  block: next goal is milestone 5 (what should be on screen, compare with PCSX2).**
+  patch (see "MFIFO + D_ENABLE patch"). Milestone 4 published (see "Publishing").
+- **Session 3 goal: milestone 5.** The first screen (display-mode menu) draws its 10-strip box, but grey, without
+  text, in the top half only. Start from "Next steps" #1.
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
+- Look at it: `powershell -File tools\run_capture.ps1 -Shots 8,25` (our build: hides the debug panel, screenshots +
+  stdout in `logs\run_<time>\`), `powershell -File tools\pcsx2_capture.ps1 -Shots 15` (same in the user's PCSX2,
+  the ground truth). Runtime tests: `tools\build_tests.cmd` (PS2Recomp's ps2x_tests, 448/448).
 - Not in git (rebuild/re-extract if lost): `external/` (clones + Ghidra + PCSX2 + MCP venv, see Pinned
   dependencies), `game/disc/` (7-Zip from the ISO), `generated/` (rerun `ps2_recomp config/analyzer_seed.toml`).
 

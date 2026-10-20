@@ -8,7 +8,8 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Ghidra project (`ghidra/Tekken4`, non-shared) analysed with SDK names applied, Ghidra export recompiled.
 - Done in session 2: Ghidra MCP tools approved and working in Claude Code. **Runtime base decided: upstream
   ps2xRuntime** (cherry-pick from the GoW fork at GS/VU1 time). ps2EntryRunner builds and runs; first stop found
-  (see "First run").
+  (see "First run"); 354 missing functions added (constructors + vtable methods), boot now waits on the sound
+  driver RPC (see "Missing functions fix").
 - **Main config is now `config/ghidra_export.toml`** (Ghidra functions only). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
@@ -123,9 +124,38 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
   function in Ghidra: constructors only reached through that table were never discovered. The window stays up
   after the game thread dies. Startup before that was fine: _InitSys, sub_281260, sub_1969F8 -> ctors.
 
+## Missing functions fix (session 2, 2026-10-20)
+- There is no `.ctors` section: ee-gcc's lists are in `.data` as `[count, ptr * count, 0]`. Constructors at
+  0x2a9830 (12 entries), destructors at 0x2a9868 (1). 4 constructors had no function (0x1fe8e8, 0x23dda0,
+  0x2492e0, 0x26e078): small leaf loops that zero static arrays.
+- `tools/find_missing_functions.py --data-pointers --write` finds those plus every aligned pointer in
+  .data/.rodata/.sdata that lands in .text no function covers (vtable methods; many are 8-byte `jr ra; nop`).
+  It traces each one through its branches to find the end and stops at the next known function.
+  350 found; all 350 start right after a return/jump (+ padding) or a non-returning call, so none is the
+  tail of a neighbour. Writes `config/extra_functions.csv` (committed).
+- `tools/postprocess_ghidra_export.py` now writes `config/function_map.csv` = Ghidra functions + extras, and
+  the TOML's `ghidra_output` points at it. `ghidra_functions_only.csv` stays Ghidra-only so the finder's
+  input doesn't change when extras are added. These functions don't exist in Ghidra yet (no MCP endpoint
+  creates functions); a Ghidra script could import extra_functions.csv later.
+- Recompile: 4809 functions (4536 recompiled + 273 stubs), 0 errors, 218 unresolved-JR warnings. Rebuild ~3 min.
+- **Second run:** constructors pass. `SifInitRpc`, one `sceSifSendCmd cid=0x80000001`, then the game thread
+  sits in `FUN_002230d0` (0x2230f0): `while (sceSifBindRpc(&cd@0x1cccbc0, 0x12345, 0) >= 0 && cd.server == 0)
+  sceGsSyncV(0);`. Caller `FUN_00223418` then calls RPC function 0x8000 and sets up 4 channels and volumes:
+  this is **Namco's sound driver** (IOP side, SID 0x12345). Not a crash: a wait for an IOP server that never appears.
+- Why it never binds: upstream `SifBindRpc` only binds when `PS2IopTransport::canBindRpc(sid)` says so, i.e.
+  `ps2xIOP`'s `IopSubsystem` has an HLE route for the SID or its emulated IOP has an IRX that registered it
+  (`ps2xIOP/src/iop_subsystem.cpp:188`). Neither knows 0x12345.
+- The ELF has no `.IRX` file names except `cdrom:\IRX\IOPRP243.IMG;1` (0x3141f0) and SDK version strings
+  for padman/mcman/mcserv, so the game's own modules are probably loaded from buffers (likely from DATA.BIN).
+
 ## Next steps
-1. Milestone 4, first fix: give every `.ctors`/`.dtors` entry a function (read the section bounds from the ELF,
-   create missing functions in Ghidra, re-export + post-process + recompile). Then scan .data for other
-   pointers into .text that don't start a function (vtables, callback tables): same failure class.
-2. Rerun and take the next stop. Re-export also picks up the 3 late SDK renames.
-3. Later: export Ghidra's switch tables into `[jump_tables]` to cut the 155 unresolved JR sites.
+1. Milestone 4, sound-driver RPC (SID 0x12345). First find how the game loads its IOP modules: look at
+   the callers of sceSifRebootIop / sceSifLoadModule / sceSifExecModuleBuffer / LoadModuleBuffer in Ghidra,
+   and check what the runtime logs for them. Then pick one:
+   a. quick, gets past boot: a Tekken game override that registers an HLE route for 0x12345 answering
+      binds and calls (silent sound; reply buffer layouts from FUN_00223418 and the other callers of the client
+      at 0x1cccbc0);
+   b. proper (milestone 8): extract the sound IRX and run it on ps2xIOP's emulated IOP.
+   Recommend (a) now, (b) when we get to sound. Compare with PCSX2 (IOP modules list) before relying on it.
+2. Re-export from Ghidra (3 late SDK renames) whenever Ghidra is next used for an export; rerun post-process.
+3. Later: export Ghidra's switch tables into `[jump_tables]` to cut the unresolved JR sites.

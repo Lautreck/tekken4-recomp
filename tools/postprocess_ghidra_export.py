@@ -10,6 +10,8 @@ Run after every export (Ghidra open with GhidraMCPPlugin enabled):
   the generated code (77 MB -> 286 MB) and doubled the unresolved-JR warnings, while the
   recompiler already derives ~31k internal entry points itself. If a runtime "function not found"
   ever points at a label address, switch ghidra_output back to config/ghidra_functions.csv.
+- Writes config/function_map.csv (what the recompiler reads): those functions plus
+  config/extra_functions.csv, the ones Ghidra never found (tools/find_missing_functions.py).
 """
 import csv
 import re
@@ -21,6 +23,8 @@ from ghidra_apply_sdk_names import ghidra_functions  # noqa: E402
 TOML = "config/ghidra_export.toml"
 FULL_CSV = "config/ghidra_functions.csv"
 FUNCS_CSV = "config/ghidra_functions_only.csv"
+EXTRA_CSV = "config/extra_functions.csv"
+MAP_CSV = "config/function_map.csv"
 
 
 def main():
@@ -32,9 +36,16 @@ def main():
         csv.writer(f).writerows(keep)
     print(f"{FUNCS_CSV}: kept {len(keep) - 1} function rows of {len(rows) - 1} (Ghidra has {len(starts)} functions)")
 
+    with open(EXTRA_CSV, newline="") as f:
+        extra = [r for r in list(csv.reader(f))[1:] if int(r[1], 16) not in starts]
+    merged = sorted(keep[1:] + extra, key=lambda r: int(r[1], 16))
+    with open(MAP_CSV, "w", newline="") as f:
+        csv.writer(f).writerows([keep[0]] + merged)
+    print(f"{MAP_CSV}: {len(keep) - 1} Ghidra functions + {len(extra)} from {EXTRA_CSV}")
+
     with open(TOML) as f:
         text = f.read()
-    for key, value in (("input", "game/disc/SCES_508.78"), ("output", "generated/"), ("ghidra_output", FUNCS_CSV)):
+    for key, value in (("input", "game/disc/SCES_508.78"), ("output", "generated/"), ("ghidra_output", MAP_CSV)):
         text = re.sub(rf"^{key} = .*$", f'{key} = "{value}"', text, count=1, flags=re.M)
     with open(TOML, "w") as f:
         f.write(text)

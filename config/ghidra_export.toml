@@ -9,7 +9,7 @@
 [general]
 input = "game/disc/SCES_508.78"
 output = "generated/"
-ghidra_output = "config/ghidra_functions_only.csv"
+ghidra_output = "config/function_map.csv"
 single_file_output = false
 patch_syscalls = false
 patch_cop0 = true

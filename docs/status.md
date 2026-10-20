@@ -4,11 +4,12 @@ _Last updated: 2026-10-20 (end of session 1)_
 
 ## Resume here
 To continue, open Claude Code in this folder and say: "read docs/status.md and continue".
-- Done in session 1: toolchain installed, PS2Recomp tools built, analyzer seed + full recompile with 0 errors.
-- **Waiting on the user:** Ghidra import is not done yet (no `ghidra/` folder). Steps: run
-  `external\ghidra_12.1.4_PUBLIC\ghidraRun.bat` -> new project in `ghidra\` -> import `game\disc\SCES_508.78`
-  -> accept auto-analysis -> CodeBrowser: File > Configure > Developer > tick GhidraMCPPlugin ->
-  restart Claude Code here and approve the `ghidra` MCP server (`.mcp.json`).
+- Done in session 1: toolchain installed, PS2Recomp tools built, analyzer seed + full recompile with 0 errors,
+  Ghidra project (`ghidra/Tekken4`, non-shared) analysed with SDK names applied, Ghidra export recompiled.
+- **Main config is now `config/ghidra_export.toml`** (Ghidra functions only). The analyzer seed is kept for reference.
+- Ghidra MCP: HTTP API verified working on 127.0.0.1:8080 (plugin enabled + tool saved). The MCP tools only show
+  up in Claude Code after a restart in this folder and approving the `ghidra` server; until then the tools in
+  `tools/` talk to the HTTP API directly.
 - **Open decision:** runtime base (see Next steps #2). Recommendation given: upstream first.
 - Not in git (rebuild/re-extract if lost): `external/` (clones + Ghidra + PCSX2 + MCP venv, see Pinned
   dependencies), `game/disc/` (7-Zip from the ISO), `generated/` (rerun `ps2_recomp config/analyzer_seed.toml`).
@@ -19,7 +20,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
       (JAVA_HOME set), Ghidra 12.1.4 + EE plugin v2.1.38 + GhidraMCP 2.0, PCSX2 2.8.2 portable
 - [x] 2. PS2Recomp host tools build from source (`tools\build_ps2recomp_tools.cmd`)
 - [ ] 3. Ghidra analysis + function map exported, recompiled output compiles
-      (analyzer-seeded recompile done, see below; Ghidra map and runtime build still to do)
+      (Ghidra map done and recompiled with 0 errors; runtime build still to do)
 - [ ] 4. Boots past startup without crashing
 - [ ] 5. Something on screen (Namco logo / first menu) - GS work starts here
 - [ ] 6. Menus and controller input
@@ -55,6 +56,29 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   entries (27156). Ghidra's jump-table recovery should cut these down.
 - Recompiler reports `gp=0x0`; crt0 presumably sets $gp at runtime. Check this if small-data accesses look wrong.
 
+## Ghidra pass (2026-10-20)
+- Ghidra 12.1.4 + EE plugin, Standard Defaults analysis (Decompiler Switch Analysis on, Aggressive Instruction
+  Finder off): 4388 functions, all `FUN_` (Function ID named nothing).
+- SDK names: `tools/ghidra_apply_sdk_names.py --apply` (via GhidraMCP HTTP) renamed 494 + 3; then
+  `tools/ghidra_scripts/ApplySdkNames.java` (run from Script Manager) created 71 functions Ghidra had missed
+  (kernel handlers, unused SDK code, C++ runtime). Now 4459 functions, 563/567 SDK names applied.
+- 4 SDK functions sit inside other Ghidra functions and need a manual split check:
+  `_initSeq` 0x0028c840, `_markOutput` 0x002914d8, `__eh_rtime_match` 0x0029be10, `__cp_exception_info` 0x0029ebb8.
+- The export was taken before the last 3 renames: re-export (and rerun the post-process) next time in Ghidra.
+- After each export run `python -I tools/postprocess_ghidra_export.py` (repo-relative paths, output to
+  generated/, writes the functions-only CSV).
+
+| Function map | Functions | Stubs | Unique unresolved JR sites | Output |
+|---|---|---|---|---|
+| analyzer seed | 4513 | 141 | 169 | 89 MB |
+| Ghidra export incl. 23.5k code labels | 28004 | 273 | 312 | 286 MB |
+| **Ghidra functions only (current)** | 4459 | 273 | 155 | ~80 MB |
+
+- Correction to an earlier assumption: the export CSV has no jump-table data, so Ghidra's switch analysis does
+  not resolve JR sites for the recompiler. The extra warnings with labels came from case/entry labels that
+  start mid-function (131 of 152 only appear under `entry_*`, the rest under `caseD_*`/`default`).
+  Unresolved JR sites still run via fallback dispatch. Real fix later: feed jump tables into `[jump_tables]`.
+
 ## Lessons from the God of War port (Waffle565)
 Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (read with
 `git -C external/God-Of-War-Native-Port show origin/runtime:<path>`); `main` holds docs, tools and GoW overrides.
@@ -82,9 +106,8 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
 - How the PAL build handles 50/60 Hz.
 
 ## Next steps
-1. Ghidra: create project in `ghidra/`, import the ELF with the EE plugin, auto-analyse, enable
-   GhidraMCPPlugin, run `ExportPS2Functions.java` into `config/`. Compare its function count and
-   unresolved-JR count with the analyzer seed.
+1. Restart Claude Code here and approve the `ghidra` MCP server; re-export from Ghidra + post-process.
+   Optional: export Ghidra's switch tables into `[jump_tables]` to cut the 155 unresolved JR sites.
 2. Decide runtime base: upstream ps2xRuntime (cleaner, has newer FPU fixes) vs Waffle565's fork
    (`origin/runtime`, much further on GS/VU1/IOP but GoW-tuned, based on older c5a9d02).
    Leaning: upstream first, cherry-pick from the fork when we reach GS/VU1.

@@ -19,3 +19,7 @@ external/
 build/
 out/
 generated/
+# ExportPS2Functions.java defaults its output dir to <toml dir>/output
+config/output/
+
+__pycache__/

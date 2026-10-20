@@ -11,6 +11,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   (see "First run"); 350 missing functions added (4 constructors + 346 vtable/callback targets) (see "Missing
   functions fix"); silent sound-driver override (see "Sound driver override"); MFIFO + D_ENABLE runtime
   patch (see "MFIFO + D_ENABLE patch"). Milestone 4 published (see "Publishing").
+- **Resume at: milestone 5, HLE for the driver's disc-read call 0x200** (see "Disc loader decoded").
 - **Session 3 goal: milestone 5.** The first screen (display-mode menu) draws its 10-strip box, but grey, without
   text, in the top half only. Start from "Next steps" #1.
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
@@ -259,6 +260,20 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
   silent override answers its calls (0x200, 0x2100, ...) with zeros and nothing ever arrives. Next: decode the
   0x200/0x3000-family calls (FUN_00223ca8 etc.) as load requests, or run the real driver (it is embedded in
   the ELF at 0x2e4900).
+- **Disc loader decoded (2026-10-21):** `FUN_002155d0` (main loop, every frame) runs a queue of 48 load
+  requests at 0x1ccb700. Request: [0] result (1 ok, -4 bad checksum), [1] state (1 start, 2 waiting, 4 done),
+  [2] type, [3] file index, [4] EE destination, [5] size override, [7] bytes. File table at **0x314360**,
+  16 bytes per file: +0 disc sector, +4 size, +8 checksum, +0xe decrypt key (short, <0 = none).
+  Start: `FUN_002297c0(0)` clears the done flag, then **driver call 0x200 = read from disc**:
+  `FUN_00223ca8(sector, dest, size, mode)` (mode 0/6/7 by type), busy flag 0x1ccb7cc = 1.
+  Wait: `FUN_002297b0()` returns the done flag (gp-0x5148 = **0x35a128**). Done: first 4 KB decrypted
+  (`word = ~word + key`), then the sum of all words XOR the table checksum must be 0.
+  Our silent override swallows 0x200, so nothing ever loads.
+  **Next:** (1) find who sets 0x35a128 (xrefs; likely `FUN_00225ae0(flags)`, called by the per-frame sound
+  call with reply word 3; `FUN_00229030`/`040` (flags 0x100/0x200) set 0x1ccd35c/0x1ccd360 instead);
+  (2) HLE 0x200 in the override: read `size` bytes at `sector * 2048` of the ISO (project root, local only)
+  into EE `dest`, then report completion the way (1) shows; (3) check against PCSX2 that 0x373820 and
+  0x39d000+ fill the same, then look at the screen (pick PAL60 when the menu shows).
 - Side findings: the menu text isn't in the ELF; the IOP module package is embedded LZ-compressed and
   bit-inverted at 0x2e4900 (`FUN_00197dd8` = LZ decoder, `FUN_00214fa0` = IOP boot + module loading), so the
   real sound driver ships inside the ELF. `tools/build_runtime.cmd` exit codes now propagate (an error inside a

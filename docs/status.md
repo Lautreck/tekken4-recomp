@@ -1,16 +1,17 @@
 # Status
 
-_Last updated: 2026-10-20 (end of session 1)_
+_Last updated: 2026-10-20 (end of session 2)_
 
 ## Resume here
 To continue, open Claude Code in this folder and say: "read docs/status.md and continue".
 - Done in session 1: toolchain installed, PS2Recomp tools built, analyzer seed + full recompile with 0 errors,
   Ghidra project (`ghidra/Tekken4`, non-shared) analysed with SDK names applied, Ghidra export recompiled.
+- Done in session 2: Ghidra MCP tools approved and working in Claude Code. **Runtime base decided: upstream
+  ps2xRuntime** (cherry-pick from the GoW fork at GS/VU1 time). ps2EntryRunner builds and runs; first stop found
+  (see "First run").
 - **Main config is now `config/ghidra_export.toml`** (Ghidra functions only). The analyzer seed is kept for reference.
-- Ghidra MCP: HTTP API verified working on 127.0.0.1:8080 (plugin enabled + tool saved). The MCP tools only show
-  up in Claude Code after a restart in this folder and approving the `ghidra` server; until then the tools in
-  `tools/` talk to the HTTP API directly.
-- **Open decision:** runtime base (see Next steps #2). Recommendation given: upstream first.
+- Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
+  (~3.5 min clean) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
 - Not in git (rebuild/re-extract if lost): `external/` (clones + Ghidra + PCSX2 + MCP venv, see Pinned
   dependencies), `game/disc/` (7-Zip from the ISO), `generated/` (rerun `ps2_recomp config/analyzer_seed.toml`).
 
@@ -19,8 +20,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
 - [x] 1. Toolchain installed: VS 2022 Build Tools 17.14 (MSVC), CMake 4.4.4, Ninja 1.13.2, Temurin JDK 21.0.12
       (JAVA_HOME set), Ghidra 12.1.4 + EE plugin v2.1.38 + GhidraMCP 2.0, PCSX2 2.8.2 portable
 - [x] 2. PS2Recomp host tools build from source (`tools\build_ps2recomp_tools.cmd`)
-- [ ] 3. Ghidra analysis + function map exported, recompiled output compiles
-      (Ghidra map done and recompiled with 0 errors; runtime build still to do)
+- [x] 3. Ghidra analysis + function map exported, recompiled output compiles and links into ps2EntryRunner
 - [ ] 4. Boots past startup without crashing
 - [ ] 5. Something on screen (Namco logo / first menu) - GS work starts here
 - [ ] 6. Menus and controller input
@@ -105,11 +105,27 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
 - DATA.BIN / DATA2.BIN archive format (needed for the file I/O layer).
 - How the PAL build handles 50/60 Hz.
 
+## Runtime build + first run (session 2, 2026-10-20)
+- Upstream ps2xRuntime at eb8688b, built by `tools\build_runtime.cmd` into `external/PS2Recomp/out/runtime`
+  (RelWithDebInfo, so no /GL or LTCG; unity build + PCH; 259 Ninja steps, ~3.5 min on 8 cores). Downloads raylib 5.5,
+  imgui, rlImGui and a prebuilt LGPL FFmpeg on first configure. Output: 47 MB exe + 191 MB pdb.
+- Logs: `AGRESSIVE_LOGS` OFF (per-function trace with flush, the GoW slowdown); `RUNTIME_LOGS` and
+  `IOP_RPC_TRACE` ON while chasing boot problems. Turn them off for speed later (full rebuild).
+- Upstream expects the generated code inside its tree: `tools\stage_generated.cmd` mirrors `generated\*.cpp`
+  into `ps2xRuntime/src/runner` (overwrites upstream's placeholder `register_functions.cpp`) and the two
+  `ps2_recompiled_*.h` headers into `ps2xRuntime/include`.
+- Paths: cdrom0:, host: and the ELF dir all map to `game/disc/`; mc0 is `game/disc/mc0/`. Raw `sceCdRead`
+  LBNs only resolve inside files first found via `sceCdSearchFile` (pseudo-LBNs), unless `IoPaths::cdImage`
+  points at an ISO (nothing sets it upstream; would need a game override).
+- **First stop:** the game thread ends at `[guest-branch:missing-target] JALR source=0x29b27c target=0x26e078`.
+  `FUN_0029b1f0` walks a table of code pointers at ~0x2a9840 backwards (0x27cec0, 0x27a318, 0x274218, 0x270b08
+  ran, then 0x26e078). That is the C++ static-constructor list (`.ctors`, `__do_global_ctors`). 0x26e078 has no
+  function in Ghidra: constructors only reached through that table were never discovered. The window stays up
+  after the game thread dies. Startup before that was fine: _InitSys, sub_281260, sub_1969F8 -> ctors.
+
 ## Next steps
-1. Restart Claude Code here and approve the `ghidra` MCP server; re-export from Ghidra + post-process.
-   Optional: export Ghidra's switch tables into `[jump_tables]` to cut the 155 unresolved JR sites.
-2. Decide runtime base: upstream ps2xRuntime (cleaner, has newer FPU fixes) vs Waffle565's fork
-   (`origin/runtime`, much further on GS/VU1/IOP but GoW-tuned, based on older c5a9d02).
-   Leaning: upstream first, cherry-pick from the fork when we reach GS/VU1.
-3. Build ps2EntryRunner with the generated code, logs OFF (`PS2X_ENABLE_AGRESSIVE_LOGS`,
-   `PS2X_ENABLE_RUNTIME_LOGS`, `PS2X_ENABLE_IOP_RPC_TRACE`), RelWithDebInfo.
+1. Milestone 4, first fix: give every `.ctors`/`.dtors` entry a function (read the section bounds from the ELF,
+   create missing functions in Ghidra, re-export + post-process + recompile). Then scan .data for other
+   pointers into .text that don't start a function (vtables, callback tables): same failure class.
+2. Rerun and take the next stop. Re-export also picks up the 3 late SDK renames.
+3. Later: export Ghidra's switch tables into `[jump_tables]` to cut the 155 unresolved JR sites.

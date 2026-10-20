@@ -8,8 +8,9 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Ghidra project (`ghidra/Tekken4`, non-shared) analysed with SDK names applied, Ghidra export recompiled.
 - Done in session 2: Ghidra MCP tools approved and working in Claude Code. **Runtime base decided: upstream
   ps2xRuntime** (cherry-pick from the GoW fork at GS/VU1 time). ps2EntryRunner builds and runs; first stop found
-  (see "First run"); 350 missing functions added (4 constructors + 346 vtable/callback targets), boot now waits on the sound
-  driver RPC (see "Missing functions fix").
+  (see "First run"); 350 missing functions added (4 constructors + 346 vtable/callback targets) (see "Missing
+  functions fix"); silent sound-driver override (see "Sound driver override"). **Boot now spins on the GS MFIFO
+  ring (see "MFIFO stop"), which the runtime doesn't implement: that is the next goal.**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
@@ -148,14 +149,42 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
 - The ELF has no `.IRX` file names except `cdrom:\IRX\IOPRP243.IMG;1` (0x3141f0) and SDK version strings
   for padman/mcman/mcserv, so the game's own modules are probably loaded from buffers (likely from DATA.BIN).
 
+## Sound driver override (session 2, 2026-10-20)
+- `runtime/tekken4_overrides.cpp`: first game override (`PS2_REGISTER_GAME_OVERRIDE`, matched on
+  `SCES_508.78` + entry 0x180088 + CRC32 0xBEFFF97A). Staged into `ps2xRuntime/src/runner` by
+  `tools\stage_generated.cmd`, which skips `*_overrides.cpp` when it mirrors generated/.
+- Upstream has no API for a game to add an IOP HLE route, so the override replaces this ELF's
+  `sceSifBindRpc` (0x282808), `sceSifCallRpc` (0x2829d8, `ps2_syscalls::`) and `sceSifCheckStatRpc` (0x282bc8,
+  `ps2_stubs::`) via `runtime.registerFunction`. SID 0x12345 binds (client.server = the client's own address,
+  never dereferenced), every call returns at once with a zeroed reply, status is never busy. Everything else
+  is passed to the runtime. Calls go through `dispatchGuestBranch` -> function table, so the replacement is
+  seen by all callers.
+- Sound protocol (EE library 0x2230d0-0x224140, client 0x1cccbc0, all mode 0, args in a0-a3/t0-t3 + stack):
+  send 0x1ccc700 (4 words), reply 0x1ccc780 (0x20). 0x8000 init (FUN_00223418), 0x100 per-frame (sends the
+  0xf0-terminated command queue at 0x1ccc7c0, 0x80 bytes; reply words 1-7 go to globals, word 3 = flags),
+  0x1100 and 0x3300 return reply[0] (no direct callers), 0x200/0x600/0x2100/0x2200/0x3000/0x3100/0x3200 commands.
+- **Third run:** override applied, bind OK, calls 0x8000 and 0x2100 answered. Boot moves on and then spins in
+  `FUN_001803b0` (PC 0x1803f0, called from `FUN_0022ae10`, which builds a GS packet in scratchpad).
+
+## MFIFO stop (session 2, 2026-10-20)
+- `FUN_001803b0(spr_addr, qwc)` kicks DMA channel 8 (fromSPR, 0x1000d000) into the MFIFO ring: the
+  `.mfifo` section at 0x100000 (0x80040 bytes). Before each kick it waits for free ring space:
+  `free = (drain.TADR - fromSPR.MADR) mod (1 << *(u8*)0x7000002f)`, with the drain channel's register block
+  address at scratchpad 0x70000034 (+0x30 = TADR) and the cached free count at 0x70000030.
+- Upstream runtime: `PS2Memory::tryProcessScratchpadDma` copies fromSPR linearly to MADR (no wrap at
+  RBOR/RBSR) and nothing drains the ring as a GIF/VIF1 MFIFO source, so TADR never moves and the wait never ends.
+  `Kernel/Stubs/DMA.cpp` only stores RBOR/RBSR. The GoW fork doesn't implement MFIFO either.
+- This is hardware behaviour, not a Tekken quirk: the fix belongs in the runtime (keep it as a patch in this
+  repo, offer it upstream), not in the game override.
+
 ## Next steps
-1. Milestone 4, sound-driver RPC (SID 0x12345). First find how the game loads its IOP modules: look at
-   the callers of sceSifRebootIop / sceSifLoadModule / sceSifExecModuleBuffer / LoadModuleBuffer in Ghidra,
-   and check what the runtime logs for them. Then pick one:
-   a. quick, gets past boot: a Tekken game override that registers an HLE route for 0x12345 answering
-      binds and calls (silent sound; reply buffer layouts from FUN_00223418 and the other callers of the client
-      at 0x1cccbc0);
-   b. proper (milestone 8): extract the sound IRX and run it on ps2xIOP's emulated IOP.
-   Recommend (a) now, (b) when we get to sound. Compare with PCSX2 (IOP modules list) before relying on it.
-2. Re-export from Ghidra (3 late SDK renames) whenever Ghidra is next used for an export; rerun post-process.
-3. Later: export Ghidra's switch tables into `[jump_tables]` to cut the unresolved JR sites.
+1. Milestone 4/5, MFIFO: confirm the setup first (where the game writes D_CTRL.MFD/RBOR/RBSR and which
+   channel drains: GIF 0x1000a000 or VIF1 0x10009000; check against PCSX2's DMAC registers). Then implement in
+   the runtime: fromSPR MADR wraps inside RBOR..RBOR+RBSR when MFD is set; the drain channel in source-chain
+   mode reads tags from the ring (TADR wraps the same way) and feeds the existing GIF/VIF1 path; TADR updates
+   so the game's free-space check sees progress. Store it as `patches/ps2xRuntime-mfifo.patch`.
+2. Sound for real (milestone 8): find how the game loads its IOP modules (sceSifRebootIop with
+   IOPRP243.IMG, then module buffers probably from DATA.BIN), extract the sound IRX and run it on ps2xIOP's
+   emulated IOP. Then the override's sound part goes away.
+3. Re-export from Ghidra (3 late SDK renames) whenever Ghidra is next used for an export; rerun post-process.
+4. Later: export Ghidra's switch tables into `[jump_tables]` to cut the unresolved JR sites.

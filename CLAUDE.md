@@ -20,7 +20,8 @@ Static recompilation of Tekken 4 (PS2) to a native Windows executable using PS2R
   GhidraMCP 2.0 in `Ghidra/Extensions`. GhidraMCP serves on http://127.0.0.1:8080/ only while a CodeBrowser
   has the plugin enabled; bridge is `external/ghidramcp-venv/Scripts/ghidra-mcp.exe`
 - `external/pcsx2` - PCSX2 v2.8.2 portable (needs a BIOS dumped from the user's own console)
-- `config/` - our PS2Recomp TOML + Ghidra function-map CSV (no game code, safe to commit)
+- `config/` - our PS2Recomp TOML + function maps (`function_map.csv` = Ghidra + `extra_functions.csv`; no game code)
+- `runtime/` - our game overrides (`*_overrides.cpp`), staged into ps2xRuntime by `tools\stage_generated.cmd`
 - `tools/` - our own helper scripts
 - `docs/status.md` - current state and next steps; read it first, update it at the end of a session
 

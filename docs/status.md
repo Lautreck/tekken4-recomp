@@ -195,8 +195,20 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
     ring); END/REFE/IRQ+TIE complete the channel (D_STAT + DMAC handler), an empty ring leaves STR set.
     Data goes to `processVIF1Data` (or GIF PATH3). CALL/RET in the ring are reported and end the chain.
   - D_ENABLEW (0x1000F590) writes are mirrored to D_ENABLER (0x1000F520).
+  - CHCR reads: upstream's `readIORegister` clears STR on every channel CHCR read (transfers are synchronous
+    there). That silently stopped the MFIFO drain whenever the game polled VIF1, so later packets were skipped
+    when the game restarted VIF1 further along the ring. Reads now leave STR alone on an active MFIFO drain
+    channel (it ends on END/REFE/IRQ).
   - Not modelled: D_STAT MEIS (bit 14, the runtime only keeps bits 0-9), DMA suspension itself
-    (transfers are synchronous anyway). Not yet checked against PCSX2.
+    (transfers are synchronous anyway).
+  - Tests added to upstream's `ps2xTest/src/ps2_memory_tests.cpp` (ring wrap + drain as data arrives, END
+    completes VIF1, D_ENABLER readback); they're part of the patch. Upstream suite: 448/448 pass (run
+    `ps2x_tests.exe` from the PS2Recomp root; the VU0 macro test reads `instructions.h` relative to the cwd).
+- **PCSX2 comparison** (user's PCSX2 on E: and portable 2.8.2): the first screen is the display-mode menu
+  ("Caution: Selecting Progressive Mode..." / PAL50 / PAL60 / Progressive Scan) on a brown box built from the
+  same **10 vertical sprite strips** our runtime draws. So the ring -> VIF1 -> GS packet path carries the right
+  geometry; colour (grey vs brown), text and vertical placement (top half vs centred) are milestone 5 issues.
+  PINE can't read hardware registers (they come back 0), so the register setup was taken from the game code.
 - **Result:** boot reaches the main loop `FUN_001969f8` and stays there: about **47 frames/s** (PAL wants 50),
   1000+ frames in 21 s (frame counter = the per-frame sound call 0x100, logged by the override at 1/10/100/...).
   Sound command 0x200 shows up. The window shows only a grey 560x224 block made of 10 vertical strips
@@ -204,16 +216,18 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
 - The runtime's debug panel covers the picture: F1 toggles it.
 
 ## Next steps
-1. Milestone 5, why only grey: run the game in PCSX2 (BIOS dumps in `E:\God Hand + Emulator\bios`, PAL
-   SCPH-70004 v12) to see what the first screens are (language / 60 Hz prompt? Namco logo?) and when; then
-   compare GS state: is the game drawing through VU1 (XGKICK) and the runtime dropping it, waiting on
-   a pad/memory-card/CD read, or showing a screen whose texture upload failed? The debug panel's GS, DMA/IO
-   and Threads tabs help. Main loop mode = `FUN_001979a0()` (switch at the end of FUN_001969f8).
+1. Milestone 5, the display-mode menu: our runtime draws its 10-strip box but grey, without text, squashed
+   into the top half. Check (a) colour/texture: is the box textured (TEX0/TME) and is the texture upload
+   (GIF IMAGE via PATH3 = table entry 2, or VIF1 DIRECT) reaching GS memory; (b) text: font texture upload and
+   the sprites that draw it; (c) placement: the game renders fields (224 lines) and the display should
+   scale it to 448/512 (DISPLAY1/2 DH, MAGV, SMODE2 FFMD). Ground truth: `E:\God Hand + Emulator\pcsx2.exe
+   --nogui "<iso>"` (English) shows the full screen; the runtime's debug panel (F1) has GS and DMA/IO tabs.
+   Main loop mode = `FUN_001979a0()` (switch at the end of FUN_001969f8).
 2. Frame pacing: 47 vs 50 fps. The loop busy-waits on `RCNT0_COUNT >= 0x724` and on vsync.
 3. Sound for real (milestone 8): find how the game loads its IOP modules (sceSifRebootIop with
    IOPRP243.IMG, then module buffers probably from DATA.BIN), extract the sound IRX and run it on ps2xIOP's
    emulated IOP. Then the override's sound part goes away.
-4. Offer the MFIFO/D_ENABLE patch upstream (ran-j/PS2Recomp) once PCSX2 confirms it; ask the user first.
+4. Upstream PR for the MFIFO/D_ENABLE patch: see "Publishing" below.
 5. Re-export from Ghidra (3 late SDK renames) whenever Ghidra is next used for an export; rerun post-process.
 6. Later: export Ghidra's switch tables into `[jump_tables]` to cut the unresolved JR sites.
 7. Watch: upstream keeps its RPC server pool at guest 0x01F10000, above the game's stack top (sp starts

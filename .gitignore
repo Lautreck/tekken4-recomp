@@ -24,3 +24,7 @@ logs/
 config/output/
 
 __pycache__/
+
+# Local shortcuts and scratch folders
+*.lnk
+help/

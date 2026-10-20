@@ -17,6 +17,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <unordered_map>
 
 namespace tekken4
 {
@@ -130,6 +131,9 @@ namespace tekken4
             }
             f << "\n";
         }
+        // EE RAM 0x300000-0x500000 (.rodata, .bss start, the game's buffers) for comparing with PCSX2's.
+        std::ofstream ram("ram_0x300000_frame" + std::to_string(frame) + ".bin", std::ios::binary);
+        ram.write(reinterpret_cast<const char *>(runtime.memory().getRDRAM() + 0x300000u), 0x200000);
         RUNTIME_LOG("[tekken4] GS dump written for frame " << frame << "\n");
     }
 
@@ -140,12 +144,28 @@ namespace tekken4
     }
 
     // Each replacement mirrors the generated stub wrappers: return to $ra, then handle or pass through.
+    // Every other RPC service the game talks to, logged once per (client, sid) and (sid, function).
+    std::set<uint64_t> g_loggedOtherBinds;
+    std::set<uint64_t> g_loggedOtherCalls;
+    std::unordered_map<uint32_t, uint32_t> g_clientSid;
+
     void sifBindRpc(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         ctx->pc = getRegU32(ctx, 31);
         if (getRegU32(ctx, 5) != kSoundSid)
         {
+            const uint32_t client = getRegU32(ctx, 4);
+            const uint32_t sid = getRegU32(ctx, 5);
             ps2_stubs::sceSifBindRpc(rdram, ctx, runtime);
+            uint32_t server = 0u;
+            if (const uint8_t *cd = getMemPtr(rdram, client))
+                std::memcpy(&server, cd + kClientServerOffset, sizeof(server));
+            std::lock_guard<std::mutex> lock(g_mutex);
+            g_clientSid[client] = sid;
+            if (g_loggedOtherBinds.insert((static_cast<uint64_t>(client) << 32) | sid).second)
+                RUNTIME_LOG("[tekken4] bind sid 0x" << std::hex << sid << " client 0x" << client << " -> server 0x"
+                                                    << server << (server ? "" : " (not bound, game will retry)")
+                                                    << std::dec << "\n");
             return;
         }
 
@@ -175,6 +195,17 @@ namespace tekken4
         const uint32_t client = getRegU32(ctx, 4);
         if (!isSoundClient(client))
         {
+            const uint32_t fno = getRegU32(ctx, 5);
+            {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                const auto it = g_clientSid.find(client);
+                const uint32_t sid = it != g_clientSid.end() ? it->second : 0u;
+                if (g_loggedOtherCalls.insert((static_cast<uint64_t>(sid) << 32) | fno).second)
+                    RUNTIME_LOG("[tekken4] call sid 0x" << std::hex << sid << " fno 0x" << fno << " send 0x"
+                                                        << getRegU32(ctx, 7) << "/" << getRegU32(ctx, 8) << " recv 0x"
+                                                        << getRegU32(ctx, 9) << "/" << getRegU32(ctx, 10) << std::dec
+                                                        << " (first time)\n");
+            }
             ps2_syscalls::sceSifCallRpc(rdram, ctx, runtime);
             return;
         }

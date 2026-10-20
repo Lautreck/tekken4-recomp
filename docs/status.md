@@ -249,6 +249,16 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
     what our build is waiting on.
   - 59.5 fps: a PAL game should run at 50. The runtime paces VSync at 60 Hz; check how it picks the rate
     (SMODE1/SMODE2 PAL) before trusting frame timing.
+- **Ground truth with input:** `tools/pcsx2_capture.ps1 -Keys "12:Down","14:Cross" -Shots 13,20` boots the
+  portable PCSX2 (pad 1 on the keyboard, see the script) and picks **PAL60** on the display-mode menu (the user
+  wants 60 Hz chosen on every run); the Namco logo follows ~6 s later. The user's PCSX2 1.6 on E: ignores our
+  key presses (LilyPad), its config was restored unchanged.
+- **Data never loads in our build:** EE RAM 0x373000-0x395000 (menu texture at 0x373820) and 0x39d000-0x500000
+  are filled in PCSX2 at the menu but all zero in ours. The game binds no RPC service other than the sound
+  driver (0x12345) and makes no other SIF calls, so the loader is probably that same Namco IOP driver: the
+  silent override answers its calls (0x200, 0x2100, ...) with zeros and nothing ever arrives. Next: decode the
+  0x200/0x3000-family calls (FUN_00223ca8 etc.) as load requests, or run the real driver (it is embedded in
+  the ELF at 0x2e4900).
 - Side findings: the menu text isn't in the ELF; the IOP module package is embedded LZ-compressed and
   bit-inverted at 0x2e4900 (`FUN_00197dd8` = LZ decoder, `FUN_00214fa0` = IOP boot + module loading), so the
   real sound driver ships inside the ELF. `tools/build_runtime.cmd` exit codes now propagate (an error inside a

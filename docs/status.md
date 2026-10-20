@@ -34,7 +34,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
 ## Pinned dependencies
 | Repo | Commit | Date |
 |---|---|---|
-| ran-j/PS2Recomp | eb8688b | 2026-10-14 |
+| ran-j/PS2Recomp | eb8688b (local branch `dmac-mfifo` = eb8688b + PR #372) | 2026-10-14 |
 | Waffle565/God-Of-War-Native-Port | 514f891 | 2026-10-18 |
 | chaoticgd/ghidra-emotionengine-reloaded | v2.1.38 (asset for Ghidra 12.1.4) | 2026-10-04 |
 
@@ -214,6 +214,20 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
   Sound command 0x200 shows up. The window shows only a grey 560x224 block made of 10 vertical strips
   (a framebuffer clear?) in the top half, unchanged from 6 s to 45 s.
 - The runtime's debug panel covers the picture: F1 toggles it.
+
+## Publishing (from 2026-10-21)
+The user pre-authorized publishing every successful milestone on three channels:
+- **Project repo (public):** https://github.com/Lautreck/tekken4-recomp (`origin`, branch `master`). Commits use
+  `Pablo <8440795+Lautreck@users.noreply.github.com>` (set in this repo's git config; history was rewritten to it
+  before the first push). Never push game files, Ghidra DBs, generated C++, BIOS or disc data.
+- **Upstream PRs:** fork https://github.com/Lautreck/PS2Recomp (remote `fork` in `external/PS2Recomp`).
+  PR #372 https://github.com/ran-j/PS2Recomp/pull/372 = `patches/ps2xRuntime-dmac-mfifo.patch` (branch
+  `dmac-mfifo`, commit 38d6396). `external/PS2Recomp` now sits on that branch (eb8688b + the patch), so
+  `build_runtime.cmd` finds the patch already applied. If the PR is merged, move back to upstream `main` and
+  drop the patch file. Upstream PR style: plain title, problem / per-file changes / found while / verified with,
+  "Made by Pablo and assisted with Claude Code."
+- **Milestone page:** milestone 4 at https://claude.ai/artifact/BTDUfBQqwaDsn83wdRh2gf (private until the user
+  shares it from the page's Share menu). Source: our runtime screenshot next to PCSX2's.
 
 ## Next steps
 1. Milestone 5, the display-mode menu: our runtime draws its 10-strip box but grey, without text, squashed

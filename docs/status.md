@@ -11,7 +11,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   (see "First run"); 350 missing functions added (4 constructors + 346 vtable/callback targets) (see "Missing
   functions fix"); silent sound-driver override (see "Sound driver override"); MFIFO + D_ENABLE runtime
   patch (see "MFIFO + D_ENABLE patch"). Milestone 4 published (see "Publishing").
-- **Resume at: milestone 5, HLE for the driver's disc-read call 0x200** (see "Disc loader decoded").
+- **Resume at: milestone 5, game stuck in FUN_002331f8 waiting for DMA-end handlers** (see "Current stop").
 - **Session 3 goal: milestone 5.** The first screen (display-mode menu) draws its 10-strip box, but grey, without
   text, in the top half only. Start from "Next steps" #1.
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
@@ -274,6 +274,23 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
   (2) HLE 0x200 in the override: read `size` bytes at `sector * 2048` of the ISO (project root, local only)
   into EE `dest`, then report completion the way (1) shows; (3) check against PCSX2 that 0x373820 and
   0x39d000+ fill the same, then look at the screen (pick PAL60 when the menu shows).
+- **Disc-read HLE works (override, call 0x200):** the done flag 0x35a128 is bumped by callback `0x229328`
+  (`flag += 1`), reached only through a table at .data 0x2ce490 of driver event callbacks (0x229290 ring
+  read pointer, 0x2292d0, 0x229318, 0x229328, 0x229340); we apply its effect directly after each read.
+  **Sectors count from the start of DATA.BIN** (disc LBN 1236): with that base every checksum matches
+  (decrypt first 4 KB `~w + key`, key = the table's short at +0xe, -1 = plain). game/disc has no DATA.BIN
+  (only the ELF, SYSTEM.CNF, IOPRP were extracted), so the override reads the ISO in the project root at
+  (1236 + sector) * 2048 (or a loose game/disc/TEKKEN/DATA.BIN if present; TEKKEN4_ISO overrides the path).
+  Mode 6/7 requests (e.g. sector 9378, 1.2 MB -> 0x5010) target sound/IOP memory: logged, not copied.
+  Result: the first file loads and passes its checksum, the sound bank request follows, then the main loop
+  stops after frame 1 and a few garbled coloured pixels appear at the bottom left.
+- **Current stop:** game thread in `FUN_002331f8` (PC 0x233210), the MFIFO flush: it spins until the ring
+  state (struct from FUN_00232c20) has state[4] == 0 and state[0] == 0. Those are updated only by the
+  VIF1/GIF DMA end handlers (0x233430 via AddDmacHandler 1, 0x233548 via AddDmacHandler 2) as they step
+  the per-frame state machine (FUN_00233030/00233130/00233188). With real data the frame now has more
+  stages (texture upload through GIF = table entry 2, MFD 0), and one completion never arrives.
+  Next: dump state[0..0x14] when stuck, check that the GIF channel's completion queues DMAC cause 2 and that
+  the handler runs, compare with PCSX2's ring (texture upload + 0x152-qword draw list).
 - Side findings: the menu text isn't in the ELF; the IOP module package is embedded LZ-compressed and
   bit-inverted at 0x2e4900 (`FUN_00197dd8` = LZ decoder, `FUN_00214fa0` = IOP boot + module loading), so the
   real sound driver ships inside the ELF. `tools/build_runtime.cmd` exit codes now propagate (an error inside a

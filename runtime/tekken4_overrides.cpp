@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <mutex>
@@ -37,6 +38,79 @@ namespace tekken4
     constexpr uint32_t kClientServerOffset = 0x24u;
     constexpr uint32_t kMaxReplySize = 0x1000u;
     constexpr uint32_t kSoundFrameCall = 0x100u; // FUN_002232a0, once per pass of the main loop (FUN_001969f8)
+
+    // The same driver is the game's disc loader. FUN_002155d0 sends call 0x200 with (sector, EE destination,
+    // size, mode) in the 4 send words. Sectors count from the start of TEKKEN/DATA.BIN (file table at 0x314360:
+    // sector, size, checksum, key; with that base every checksum matches). When the read is done the driver
+    // triggers callback 0x229328, which does done_flag += 1 at gp-0x5148 = 0x35a128; the loader polls that flag
+    // (FUN_002297b0), decrypts the first 4 KB (~word + key) and checks the file's checksum.
+    constexpr uint32_t kDiscReadCall = 0x200u;
+    constexpr uint32_t kDiscReadDoneFlag = 0x0035a128u;
+    // Where TEKKEN/DATA.BIN sits on this disc (ISO9660 directory of SCES-50878 v2.00).
+    constexpr uint64_t kDataBinLbn = 1236u;
+    constexpr uint64_t kDataBinSize = 2694412288u;
+    std::ifstream g_disc;            // the ISO, or a loose DATA.BIN if one was extracted next to the ELF
+    uint64_t g_discBase = 0u;        // byte offset of DATA.BIN inside g_disc
+    bool g_discTried = false;
+
+    bool openDisc()
+    {
+        if (g_discTried)
+            return g_disc.is_open();
+        g_discTried = true;
+        const PS2Runtime::IoPaths &paths = PS2Runtime::getIoPaths();
+        std::filesystem::path source = paths.cdRoot / "TEKKEN" / "DATA.BIN";
+        std::error_code ec;
+        if (std::filesystem::exists(source, ec))
+            g_discBase = 0u;
+        else
+        {
+            source.clear();
+            if (const char *env = std::getenv("TEKKEN4_ISO"))
+                source = env;
+            else // the first .iso in the project root (the ELF lives in <root>/game/disc)
+                for (const auto &entry : std::filesystem::directory_iterator(paths.elfDirectory.parent_path().parent_path(), ec))
+                    if (entry.path().extension() == ".iso")
+                    {
+                        source = entry.path();
+                        break;
+                    }
+            g_discBase = kDataBinLbn * 2048u;
+        }
+        if (!source.empty())
+            g_disc.open(source, std::ios::binary);
+        RUNTIME_LOG("[tekken4] driver reads from "
+                    << (g_disc.is_open() ? source.string() : std::string("NOTHING (no DATA.BIN, no ISO; set TEKKEN4_ISO)"))
+                    << "\n");
+        return g_disc.is_open();
+    }
+
+    void discRead(uint8_t *rdram, uint32_t sendAddr)
+    {
+        uint32_t args[4] = {};
+        if (const uint8_t *send = getMemPtr(rdram, sendAddr))
+            std::memcpy(args, send, sizeof(args));
+        const uint32_t sector = args[0], dest = args[1], size = args[2], mode = args[3];
+        const uint32_t phys = dest & 0x01FFFFFFu;
+        bool copied = false;
+        if (mode == 0u && size != 0u && phys + static_cast<uint64_t>(size) <= PS2_RAM_SIZE && openDisc())
+        {
+            const uint64_t offset = static_cast<uint64_t>(sector) * 2048u;
+            if (offset >= kDataBinSize) // not seen yet; DATA2.BIN's mapping is unknown
+                RUNTIME_LOG("[tekken4] sector " << sector << " is past DATA.BIN\n");
+            g_disc.clear();
+            g_disc.seekg(static_cast<std::streamoff>(g_discBase + offset));
+            g_disc.read(reinterpret_cast<char *>(rdram + phys), size);
+            copied = g_disc.gcount() == static_cast<std::streamsize>(size);
+        }
+        RUNTIME_LOG("[tekken4] disc read sector " << sector << " size " << size << " -> 0x" << std::hex << dest
+                                                  << " mode " << mode << std::dec
+                                                  << (copied ? "" : " (not copied: mode/size/file)") << "\n");
+        uint32_t done = 0u;
+        std::memcpy(&done, rdram + kDiscReadDoneFlag, 4);
+        ++done;
+        std::memcpy(rdram + kDiscReadDoneFlag, &done, 4);
+    }
 
     std::mutex g_mutex;
     std::set<uint32_t> g_soundClients;
@@ -218,6 +292,8 @@ namespace tekken4
         {
             std::memset(dst, 0, replySize < kMaxReplySize ? replySize : kMaxReplySize);
         }
+        if (function == kDiscReadCall)
+            discRead(rdram, getRegU32(ctx, 7));
 
         std::lock_guard<std::mutex> lock(g_mutex);
         if (g_loggedCalls.insert(function).second)

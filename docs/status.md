@@ -219,6 +219,41 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
   (a framebuffer clear?) in the top half, unchanged from 6 s to 45 s.
 - The runtime's debug panel covers the picture: F1 toggles it.
 
+## Milestone 5 investigation (session 2/3, 2026-10-21)
+- Tools: `TEKKEN4_GS_DUMP=<frame>` (env var, read by the override) records two frames of the GS debug history
+  and every GIF packet raw, then writes `gs_dump_frame<N>.txt` (display regs, contexts, CD snapshot, events)
+  and `gif_packets_frame<N>.txt` into the run directory. `tools/pine.py dump <addr> <size>` reads PCSX2 RAM.
+  `PS2X_MFIFO_LOG=<file>` is a LOCAL debug print in drainMfifo (not in the patch file; remove before export).
+- Display: PMODE 0x66 (circuit 2 only), SMODE2 3 (interlaced, field mode), DISPFB2 = PSMCT16 at block 0xd2,
+  640 wide, DISPLAY2 640x512 (DH 511, MAGH 3). The **10 strips are the game's frame copy**: 64-px sprites
+  copying the 32-bit render buffer (block 0, read as CT24) into the 16-bit display buffer, then 10 untextured
+  sprites clear the render buffer. They are not the menu box.
+- Per frame the VIF1 ring carries only: GS setup (REF 0x320df0), a small CNT packet (A+D: RGBAQ, TEST_2),
+  the clear (REF 0x320f40), two more static packets, padding (REF 0x321040 = 16 x "XYZ3 = 0", sent 3x per
+  frame on purpose), and the font CLUT upload (16-colour grey/alpha ramp to block 0x3fe1). No menu draws.
+- **Root cause found:** the CNT packet in our ring is stale bytes. The game builds such packets with
+  `FUN_0022a748(&p, idx)` -> `FUN_00180320`: **toSPR (channel 9) in source-chain mode with TTE** (CHCR 0x145,
+  tags from the table at 0x2cea10), then `FUN_0022a720` patches the copied tag to CNT. The runtime only did
+  normal-mode SPR DMA, so chain mode copied nothing and the game sent old scratchpad contents. PCSX2's ring
+  (read over PINE) has the correct CNT qwc 3 packet.
+- **Fixed:** `patches/ps2xRuntime-spr-chain.patch` (`processSprToChain`: all tag types, TTE copies the whole tag
+  qword, SADR wraps in 16 KB; applied after the MFIFO patch). Our ring's first block now matches PCSX2's exactly
+  (REF 9, CNT 3 "FLUSHE; DIRECT 3", REF 16, REF 7, REF 7, REF 17, END). Not upstreamed yet (no test yet; add one
+  and send it with the next milestone).
+- **Now:** the screen is black (the grey came from the stale packet) and the loop runs at ~59.5 fps.
+  - Second ring block: ours = REF 0x312900 (8), REF 0x312980 (2), CNT 12 (font CLUT upload), padding.
+    PCSX2's (menu on screen) = the same two REFs, then CNT 5 "DIRECTHL" (BITBLTBUF...), an IMAGE of 0x1d7d qwords
+    from **0x373820** (REF, DIRECTHL: the menu texture, ~120 KB), CNT 5 (TEX0_2 etc.) and a **0x152-qword draw
+    list**. So the game is still waiting for the menu's data: 0x373820 has to be filled first (disc read through
+    an IOP module, or decompression). Next: find who writes 0x373820 (Ghidra xrefs / PCSX2 memory compare) and
+    what our build is waiting on.
+  - 59.5 fps: a PAL game should run at 50. The runtime paces VSync at 60 Hz; check how it picks the rate
+    (SMODE1/SMODE2 PAL) before trusting frame timing.
+- Side findings: the menu text isn't in the ELF; the IOP module package is embedded LZ-compressed and
+  bit-inverted at 0x2e4900 (`FUN_00197dd8` = LZ decoder, `FUN_00214fa0` = IOP boot + module loading), so the
+  real sound driver ships inside the ELF. `tools/build_runtime.cmd` exit codes now propagate (an error inside a
+  bracketed block used to be reported as success) and `.cmd` files are kept CRLF.
+
 ## Publishing (from 2026-10-21)
 The user pre-authorized publishing every successful milestone on three channels:
 - **Project repo (public):** https://github.com/Lautreck/tekken4-recomp (`origin`, branch `master`). Commits use

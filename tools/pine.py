@@ -7,6 +7,7 @@ Usage:
   python -I tools/pine.py status
   python -I tools/pine.py read32 0x1000e000 0x1000e040 ...
   python -I tools/pine.py dmac [--samples N] [--interval S]   # MFIFO/DMAC registers, sampled N times
+  python -I tools/pine.py dump 0x100000 0x400 [--out file.bin]  # RAM as quadwords ("hi lo"), or raw to a file
 """
 import argparse
 import socket
@@ -50,6 +51,9 @@ class Pine:
     def read32(self, addr):
         return struct.unpack("<I", self.call(struct.pack("<BI", READ32, addr)))[0]
 
+    def read64(self, addr):
+        return struct.unpack("<Q", self.call(struct.pack("<BI", READ64, addr)))[0]
+
     def string(self, opcode):
         body = self.call(bytes([opcode]))
         size = struct.unpack("<I", body[:4])[0]
@@ -68,6 +72,10 @@ def main():
     d = sub.add_parser("dmac")
     d.add_argument("--samples", type=int, default=1)
     d.add_argument("--interval", type=float, default=0.5)
+    m = sub.add_parser("dump")
+    m.add_argument("addr")
+    m.add_argument("size")
+    m.add_argument("--out")
     args = ap.parse_args()
 
     pine = Pine()
@@ -77,6 +85,16 @@ def main():
         for a in args.addrs:
             addr = int(a, 16)
             print(f"0x{addr:08x}: 0x{pine.read32(addr):08x}")
+    elif args.cmd == "dump":
+        base, size = int(args.addr, 16), int(args.size, 16)
+        data = b"".join(struct.pack("<Q", pine.read64(base + off)) for off in range(0, size, 8))
+        if args.out:
+            with open(args.out, "wb") as f:
+                f.write(data)
+        else:
+            for off in range(0, len(data), 16):
+                lo, hi = struct.unpack_from("<QQ", data, off)
+                print(f"{base + off:08x}: {hi:016x} {lo:016x}")
     else:
         print(" ".join(f"{name:>10}" for name, _ in DMAC_REGS))
         for i in range(args.samples):

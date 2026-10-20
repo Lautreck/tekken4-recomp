@@ -6,11 +6,17 @@
 #include "ps2_stubs.h"
 #include "ps2_syscalls.h"
 #include "runtime/ps2_memory.h"
+#include "runtime/gs/gs_frontend.h"
+#include "Stubs/CD.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iomanip>
 #include <mutex>
 #include <set>
+#include <string>
 
 namespace tekken4
 {
@@ -37,6 +43,95 @@ namespace tekken4
     uint64_t g_frames = 0u;
     uint64_t g_nextFrameLog = 1u;
     std::chrono::steady_clock::time_point g_firstFrame;
+    uint64_t g_gsDumpFrame = 0u; // TEKKEN4_GS_DUMP=<frame>, 0 = off
+
+    // While the GS history records, every GIF packet the arbiter hands to the GS is also written out raw
+    // (quadwords as "hi lo", the GIFtag first) to gif_packets_frame<N>.txt.
+    std::mutex g_gifLogMutex;
+    std::ofstream g_gifLog;
+
+    void processGifPacketLogged(PS2Runtime &runtime, const uint8_t *data, uint32_t size)
+    {
+        {
+            std::lock_guard<std::mutex> lock(g_gifLogMutex);
+            if (g_gifLog.is_open())
+            {
+                g_gifLog << "packet " << std::dec << size << " bytes\n" << std::hex << std::setfill('0');
+                for (uint32_t off = 0; off + 16u <= size && off < 0x800u; off += 16u)
+                {
+                    uint64_t lo = 0, hi = 0;
+                    std::memcpy(&lo, data + off, 8);
+                    std::memcpy(&hi, data + off + 8, 8);
+                    g_gifLog << "  " << std::setw(4) << off << ": " << std::setw(16) << hi << " " << std::setw(16) << lo
+                             << "\n";
+                }
+                g_gifLog << std::setfill(' ');
+            }
+        }
+        runtime.gs().processGIFPacket(data, size);
+    }
+
+    // Debug aid: write the GS's last 512 events (register writes, draws, image transfers) and the display
+    // registers to gs_dump_frame<N>.txt in the working directory.
+    void dumpGs(PS2Runtime &runtime, uint64_t frame)
+    {
+        std::ofstream f("gs_dump_frame" + std::to_string(frame) + ".txt");
+        const GSRegisters &p = runtime.memory().gs();
+        f << std::hex << "PMODE " << p.pmode << " SMODE1 " << p.smode1 << " SMODE2 " << p.smode2 << "\nDISPFB1 "
+          << p.dispfb1 << " DISPLAY1 " << p.display1 << "\nDISPFB2 " << p.dispfb2 << " DISPLAY2 " << p.display2
+          << "\nBGCOLOR " << p.bgcolor << "\n";
+        const GSDebugSnapshot s = runtime.gs().getDebugSnapshot();
+        for (int c = 0; c < 2; ++c)
+        {
+            const GSContext &x = s.ctx[c];
+            f << "ctx" << c << " FRAME fbp " << x.frame.fbp << " fbw " << x.frame.fbw << " psm " << +x.frame.psm
+              << " | TEX0 tbp0 " << x.tex0.tbp0 << " tbw " << +x.tex0.tbw << " psm " << +x.tex0.psm << " tw "
+              << +x.tex0.tw << " th " << +x.tex0.th << " cbp " << x.tex0.cbp << " cpsm " << +x.tex0.cpsm
+              << " | XYOFFSET/scissor see history | ALPHA " << x.alpha << " TEST " << x.test << "\n";
+        }
+        f << "TEXA ta0 " << +s.texa.ta0 << " aem " << s.texa.aem << " ta1 " << +s.texa.ta1 << "\n";
+        const ps2_stubs::CdDebugSnapshot cd = ps2_stubs::getCdDebugSnapshot();
+        f << std::dec << "CD initialized " << cd.initialized << " lastError " << cd.lastError << " nextPseudoLbn "
+          << cd.nextPseudoLbn << " root " << cd.cdRoot.string() << " files " << cd.files.size() << "\n";
+        for (const ps2_stubs::CdDebugFileEntry &file : cd.files)
+            f << "  " << file.key << " lbn " << file.baseLbn << " sectors " << file.sectors << " size " << file.sizeBytes
+              << "\n";
+        f << "\n";
+        for (const GSDebugHistoryEntry &e : runtime.gs().getDebugHistory())
+        {
+            f << std::dec << e.seq << " f" << e.frameIndex << std::hex << " ";
+            switch (e.kind)
+            {
+            case GSDebugEventKind::GifTag:
+                f << "GIFTAG size " << e.gifSizeBytes << " nloop " << e.gifNloop << " flg " << +e.gifFlg << " nreg "
+                  << +e.gifNreg;
+                break;
+            case GSDebugEventKind::Register:
+                f << "REG " << +e.reg << " = " << e.regValue;
+                break;
+            case GSDebugEventKind::Draw:
+                f << "DRAW prim " << +e.prim.type << (e.prim.tme ? " TME" : "") << (e.prim.abe ? " ABE" : "")
+                  << (e.prim.fst ? " FST" : "") << " ctx" << e.prim.ctxt << " verts " << std::dec << e.vertexCount
+                  << " x " << e.xMin << ".." << e.xMax << " y " << e.yMin << ".." << e.yMax << " a " << +e.aMin
+                  << ".." << +e.aMax << std::hex << " | fb " << e.frame.fbp << "/" << +e.frame.psm << " tex "
+                  << e.tex0.tbp0 << " tbw " << +e.tex0.tbw << " psm " << +e.tex0.psm << " " << +e.tex0.tw << "x"
+                  << +e.tex0.th << " tcc " << +e.tex0.tcc << " tfx " << +e.tex0.tfx << " cbp " << e.tex0.cbp
+                  << " cpsm " << +e.tex0.cpsm << " cld " << +e.tex0.cld << " alpha " << e.alpha;
+                break;
+            case GSDebugEventKind::Transfer:
+                f << "XFER dbp " << e.bitbltbuf.dbp << " dbw " << +e.bitbltbuf.dbw << " dpsm " << +e.bitbltbuf.dpsm
+                  << " at " << std::dec << e.trxpos.dsax << "," << e.trxpos.dsay << " " << e.trxreg.rrw << "x"
+                  << e.trxreg.rrh << " dir " << e.trxdir << " pixels " << e.transferPixels;
+                break;
+            case GSDebugEventKind::Present:
+                f << "PRESENT display fbp " << e.displayFbp << " source " << e.sourceFbp << " " << std::dec << e.width
+                  << "x" << e.height;
+                break;
+            }
+            f << "\n";
+        }
+        RUNTIME_LOG("[tekken4] GS dump written for frame " << frame << "\n");
+    }
 
     bool isSoundClient(uint32_t client)
     {
@@ -113,6 +208,23 @@ namespace tekken4
                                                          << (g_frames - 1u) / seconds << " fps)\n");
             g_nextFrameLog *= 10u;
         }
+        // The GS history is paused by default (the debug panel turns it on): record two frames, then dump.
+        if (function == kSoundFrameCall && g_gsDumpFrame != 0u && g_frames + 2u == g_gsDumpFrame)
+        {
+            runtime->gs().clearDebugHistory();
+            runtime->gs().setDebugHistoryPaused(false);
+            std::lock_guard<std::mutex> gifLock(g_gifLogMutex);
+            g_gifLog.open("gif_packets_frame" + std::to_string(g_gsDumpFrame) + ".txt");
+        }
+        if (function == kSoundFrameCall && g_frames == g_gsDumpFrame)
+        {
+            runtime->gs().setDebugHistoryPaused(true);
+            {
+                std::lock_guard<std::mutex> gifLock(g_gifLogMutex);
+                g_gifLog.close();
+            }
+            dumpGs(*runtime, g_frames);
+        }
         if (endFunction != 0u)
         {
             RUNTIME_LOG("[tekken4] sound RPC call 0x" << std::hex << function << " wants end function 0x"
@@ -134,6 +246,14 @@ namespace tekken4
 
     void apply(PS2Runtime &runtime)
     {
+        if (const char *dump = std::getenv("TEKKEN4_GS_DUMP"))
+        {
+            g_gsDumpFrame = std::strtoull(dump, nullptr, 10);
+            // Same as the runtime's own packet function, plus the raw log while recording.
+            PS2Runtime *rt = &runtime;
+            runtime.gifArbiter().setProcessPacketFn([rt](const uint8_t *data, uint32_t size)
+                                                    { processGifPacketLogged(*rt, data, size); });
+        }
         runtime.registerFunction(kSceSifBindRpc, sifBindRpc);
         runtime.registerFunction(kSceSifCallRpc, sifCallRpc);
         runtime.registerFunction(kSceSifCheckStatRpc, sifCheckStatRpc);

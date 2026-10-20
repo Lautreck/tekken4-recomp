@@ -14,7 +14,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   block: next goal is milestone 5 (what should be on screen, compare with PCSX2).**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
-  (~3.5 min clean; applies `patches*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
+  (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
 - Not in git (rebuild/re-extract if lost): `external/` (clones + Ghidra + PCSX2 + MCP venv, see Pinned
   dependencies), `game/disc/` (7-Zip from the ISO), `generated/` (rerun `ps2_recomp config/analyzer_seed.toml`).
 

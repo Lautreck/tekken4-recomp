@@ -1,0 +1,2 @@
+# Patches must keep their exact bytes (LF) or git apply fails against the PS2Recomp checkout
+*.patch -text

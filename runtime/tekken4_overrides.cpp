@@ -17,7 +17,9 @@
 #include <iomanip>
 #include <mutex>
 #include <set>
+#include <sstream>
 #include <string>
+#include <thread>
 #include <unordered_map>
 
 namespace tekken4
@@ -353,6 +355,30 @@ namespace tekken4
 
     void apply(PS2Runtime &runtime)
     {
+        if (const char *watch = std::getenv("TEKKEN4_WATCH_MS"))
+        {
+            // Debug aid for stalls: after the delay, log the MFIFO ring state (struct from FUN_00232c20:
+            // [0] pending paths, [1] active, [2] VIF1 ends, [3] GIF ends, [4] pending count, [8..] saved MADRs).
+            const unsigned long delayMs = std::strtoul(watch, nullptr, 10);
+            uint8_t *rdram = runtime.memory().getRDRAM();
+            std::thread([delayMs, rdram]() {
+                for (int i = 0; i < 3; ++i)
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(delayMs / 3 + 1));
+                    std::ostringstream s;
+                    s << std::hex;
+                    for (uint32_t off = 0; off < 0x18; off += 4)
+                    {
+                        uint32_t w = 0;
+                        std::memcpy(&w, rdram + 0x1cda2c0u + off, 4);
+                        s << " " << std::setw(8) << std::setfill('0') << w;
+                    }
+                    uint32_t done = 0;
+                    std::memcpy(&done, rdram + kDiscReadDoneFlag, 4);
+                    RUNTIME_LOG("[tekken4] watch: ring state" << s.str() << " | disc done flag " << done << "\n");
+                }
+            }).detach();
+        }
         if (const char *dump = std::getenv("TEKKEN4_GS_DUMP"))
         {
             g_gsDumpFrame = std::strtoull(dump, nullptr, 10);

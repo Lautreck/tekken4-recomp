@@ -11,10 +11,48 @@ index 28939d9..5cbe3b7 100644
      void queueCompletedDmacCause(uint32_t cause);
  
 diff --git a/ps2xRuntime/src/lib/ps2_memory.cpp b/ps2xRuntime/src/lib/ps2_memory.cpp
-index 55a10c2..33a051a 100644
+index 55a10c2..198310c 100644
 --- a/ps2xRuntime/src/lib/ps2_memory.cpp
 +++ b/ps2xRuntime/src/lib/ps2_memory.cpp
-@@ -1608,6 +1608,8 @@ bool PS2Memory::tryProcessScratchpadDma(uint32_t channelBase, uint32_t chcr)
+@@ -1419,6 +1419,7 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+                     const bool transferTagData = isVifChannel && (chcr & 0x40u) != 0u;
+ 
+                     int tagsProcessed = 0;
++                    bool chainEnded = false;
+                     uint32_t lastTagUpper = (chcr >> 16) & 0xFFFFu;
+ 
+                     while (tagsProcessed < kMaxChainTags)
+@@ -1534,7 +1535,10 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+                         if (irq && tieEnabled)
+                             endChain = true;
+                         if (endChain)
++                        {
++                            chainEnded = true;
+                             break;
++                        }
+                     }
+ 
+                     m_ioRegisters[channelBase + 0x30] = tagAddr;
+@@ -1564,10 +1568,14 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+                             m_pendingVif0Transfers.push_back(std::move(pt));
+                         }
+                     }
+-                    // else if (channelBase == 0x10009000u)
+-                    // {
+-
+-                    // }
++                    else if (chainEnded)
++                    {
++                        // A chain that ends without carrying any data (a lone END, REFE or IRQ tag) still
++                        // completes: STR clears and the channel raises D_STAT and its DMAC interrupt.
++                        const uint32_t cause = channelBase == 0x1000A000u ? 2u : (channelBase == 0x10009000u ? 1u : 0u);
++                        m_ioRegisters[channelBase + 0x20] = 0u;
++                        completeDmacChannel(channelBase, cause);
++                    }
+                 }
+                 else if (qwc > 0)
+                 {
+@@ -1608,6 +1616,8 @@ bool PS2Memory::tryProcessScratchpadDma(uint32_t channelBase, uint32_t chcr)
          return false;
  
      const uint32_t mode = (chcr >> 2u) & 0x3u;
@@ -23,7 +61,7 @@ index 55a10c2..33a051a 100644
      if (mode != 0u)
          return false;
  
-@@ -1697,6 +1699,125 @@ void PS2Memory::completeDmacChannel(uint32_t channelBase, uint32_t cause)
+@@ -1697,6 +1707,125 @@ void PS2Memory::completeDmacChannel(uint32_t channelBase, uint32_t cause)
      queueCompletedDmacCause(cause);
  }
  

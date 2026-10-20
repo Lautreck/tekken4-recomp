@@ -11,7 +11,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   (see "First run"); 350 missing functions added (4 constructors + 346 vtable/callback targets) (see "Missing
   functions fix"); silent sound-driver override (see "Sound driver override"); MFIFO + D_ENABLE runtime
   patch (see "MFIFO + D_ENABLE patch"). Milestone 4 published (see "Publishing").
-- **Resume at: milestone 5, game stuck in FUN_002331f8 waiting for DMA-end handlers** (see "Current stop").
+- **Resume at: milestone 5, extra VIF1/GIF end interrupts drive the ring counter negative** (see "Why the flush hangs").
 - **Session 3 goal: milestone 5.** The first screen (display-mode menu) draws its 10-strip box, but grey, without
   text, in the top half only. Start from "Next steps" #1.
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
@@ -237,7 +237,7 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
   tags from the table at 0x2cea10), then `FUN_0022a720` patches the copied tag to CNT. The runtime only did
   normal-mode SPR DMA, so chain mode copied nothing and the game sent old scratchpad contents. PCSX2's ring
   (read over PINE) has the correct CNT qwc 3 packet.
-- **Fixed:** `patches/ps2xRuntime-spr-chain.patch` (`processSprToChain`: all tag types, TTE copies the whole tag
+- **Fixed:** `patches/ps2xRuntime-dma-chain.patch` (was spr-chain) (`processSprToChain`: all tag types, TTE copies the whole tag
   qword, SADR wraps in 16 KB; applied after the MFIFO patch). Our ring's first block now matches PCSX2's exactly
   (REF 9, CNT 3 "FLUSHE; DIRECT 3", REF 16, REF 7, REF 7, REF 17, END). Not upstreamed yet (no test yet; add one
   and send it with the next milestone).
@@ -291,6 +291,19 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
   stages (texture upload through GIF = table entry 2, MFD 0), and one completion never arrives.
   Next: dump state[0..0x14] when stuck, check that the GIF channel's completion queues DMAC cause 2 and that
   the handler runs, compare with PCSX2's ring (texture upload + 0x152-qword draw list).
+- **Why the flush hangs (found):** ring state at **0x1cda2c0**: [0] pending paths, [1] active, [2] VIF1 end
+  count, [3] GIF end count, [4] frames pending. Per frame: `FUN_00232d20` (loop start) zeroes it,
+  `FUN_00233a38` (end of frame, via FUN_00233360) does [4] += 1 and sends a 2-qword closing packet. GIF end
+  handler 0x233548: [3]++; 1 -> restart VIF1 path 0; 2 -> [4]-- then paths 2/1; else DisableDmac(2). VIF1
+  end handler 0x233430: [2]++; 1 -> path 1; 2 -> paths 1/2; 3 and [4] != 0 -> [3]--, [2]-- (another round).
+  Watchdog (`TEKKEN4_WATCH_MS=9000`) while stuck: [0]=0 [1]=1 [2]=2 [3]=2 **[4]=-38**: once [4] goes
+  negative every VIF1+GIF end pair drives it lower, and the flush (`FUN_002331f8`) waits for 0 forever. So we
+  deliver more VIF1/GIF end interrupts per frame than the hardware, or in another order. Next: log every DMAC
+  cause the runtime queues (channel, why: MFIFO END, chain end, normal transfer) for one frame and work out
+  the hardware order from the game's packets; suspects: GIF completions from upstream's
+  processPendingTransfers (one per call), VIF1 END completions in drainMfifo, the new empty-chain completion.
+- Also in the dma-chain patch: a chain that ends without data (lone END/REFE/IRQ tag) now completes its
+  channel (upstream left STR set and raised no interrupt). Correct per hardware, but didn't fix the hang.
 - Side findings: the menu text isn't in the ELF; the IOP module package is embedded LZ-compressed and
   bit-inverted at 0x2e4900 (`FUN_00197dd8` = LZ decoder, `FUN_00214fa0` = IOP boot + module loading), so the
   real sound driver ships inside the ELF. `tools/build_runtime.cmd` exit codes now propagate (an error inside a

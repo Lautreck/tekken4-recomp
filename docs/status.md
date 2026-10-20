@@ -8,9 +8,9 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Ghidra project (`ghidra/Tekken4`, non-shared) analysed with SDK names applied, Ghidra export recompiled.
 - Done in session 2: Ghidra MCP tools approved and working in Claude Code. **Runtime base decided: upstream
   ps2xRuntime** (cherry-pick from the GoW fork at GS/VU1 time). ps2EntryRunner builds and runs; first stop found
-  (see "First run"); 354 missing functions added (constructors + vtable methods), boot now waits on the sound
+  (see "First run"); 350 missing functions added (4 constructors + 346 vtable/callback targets), boot now waits on the sound
   driver RPC (see "Missing functions fix").
-- **Main config is now `config/ghidra_export.toml`** (Ghidra functions only). The analyzer seed is kept for reference.
+- **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
 - Not in git (rebuild/re-extract if lost): `external/` (clones + Ghidra + PCSX2 + MCP venv, see Pinned

@@ -7,6 +7,7 @@
 #include "ps2_syscalls.h"
 #include "runtime/ps2_memory.h"
 
+#include <chrono>
 #include <cstring>
 #include <mutex>
 #include <set>
@@ -28,10 +29,14 @@ namespace tekken4
     constexpr uint32_t kClientBodySize = 0x18u;
     constexpr uint32_t kClientServerOffset = 0x24u;
     constexpr uint32_t kMaxReplySize = 0x1000u;
+    constexpr uint32_t kSoundFrameCall = 0x100u; // FUN_002232a0, once per pass of the main loop (FUN_001969f8)
 
     std::mutex g_mutex;
     std::set<uint32_t> g_soundClients;
     std::set<uint32_t> g_loggedCalls;
+    uint64_t g_frames = 0u;
+    uint64_t g_nextFrameLog = 1u;
+    std::chrono::steady_clock::time_point g_firstFrame;
 
     bool isSoundClient(uint32_t client)
     {
@@ -93,6 +98,20 @@ namespace tekken4
         {
             RUNTIME_LOG("[tekken4] sound RPC call 0x" << std::hex << function << " (first time), reply 0x" << reply
                                                        << " size 0x" << replySize << std::dec << "\n");
+        }
+        // The per-frame sound update doubles as a frame counter: log at 1, 10, 100, ... frames.
+        if (function == kSoundFrameCall && ++g_frames == g_nextFrameLog)
+        {
+            const auto now = std::chrono::steady_clock::now();
+            if (g_frames == 1u)
+                g_firstFrame = now;
+            const double seconds = std::chrono::duration<double>(now - g_firstFrame).count();
+            if (g_frames == 1u)
+                RUNTIME_LOG("[tekken4] main loop frame 1\n");
+            else
+                RUNTIME_LOG("[tekken4] main loop frame " << g_frames << " after " << seconds << " s ("
+                                                         << (g_frames - 1u) / seconds << " fps)\n");
+            g_nextFrameLog *= 10u;
         }
         if (endFunction != 0u)
         {

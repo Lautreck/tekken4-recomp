@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-10-20 (end of session 2)_
+_Last updated: 2026-10-21 (end of session 2)_
 
 ## Resume here
 To continue, open Claude Code in this folder and say: "read docs/status.md and continue".
@@ -9,11 +9,12 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
 - Done in session 2: Ghidra MCP tools approved and working in Claude Code. **Runtime base decided: upstream
   ps2xRuntime** (cherry-pick from the GoW fork at GS/VU1 time). ps2EntryRunner builds and runs; first stop found
   (see "First run"); 350 missing functions added (4 constructors + 346 vtable/callback targets) (see "Missing
-  functions fix"); silent sound-driver override (see "Sound driver override"). **Boot now spins on the GS MFIFO
-  ring (see "MFIFO stop"), which the runtime doesn't implement: that is the next goal.**
+  functions fix"); silent sound-driver override (see "Sound driver override"); MFIFO + D_ENABLE runtime
+  patch (see "MFIFO + D_ENABLE patch"). **The game now runs its main loop at ~47 fps but shows only a grey
+  block: next goal is milestone 5 (what should be on screen, compare with PCSX2).**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
-  (~3.5 min clean) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
+  (~3.5 min clean; applies `patches*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
 - Not in git (rebuild/re-extract if lost): `external/` (clones + Ghidra + PCSX2 + MCP venv, see Pinned
   dependencies), `game/disc/` (7-Zip from the ISO), `generated/` (rerun `ps2_recomp config/analyzer_seed.toml`).
 
@@ -23,8 +24,9 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
       (JAVA_HOME set), Ghidra 12.1.4 + EE plugin v2.1.38 + GhidraMCP 2.0, PCSX2 2.8.2 portable
 - [x] 2. PS2Recomp host tools build from source (`tools\build_ps2recomp_tools.cmd`)
 - [x] 3. Ghidra analysis + function map exported, recompiled output compiles and links into ps2EntryRunner
-- [ ] 4. Boots past startup without crashing
+- [x] 4. Boots past startup without crashing (main loop runs at ~47 fps, 2026-10-21)
 - [ ] 5. Something on screen (Namco logo / first menu) - GS work starts here
+      (so far: a grey cleared block only)
 - [ ] 6. Menus and controller input
 - [ ] 7. A fight: two characters on a stage, correct rendering, steady frame rate
 - [ ] 8. Sound, saves, PC features
@@ -177,14 +179,42 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
 - This is hardware behaviour, not a Tekken quirk: the fix belongs in the runtime (keep it as a patch in this
   repo, offer it upstream), not in the game override.
 
+## MFIFO + D_ENABLE patch (session 2, 2026-10-21)
+- The game's setup, from Ghidra: `FUN_00232e48(idx)` picks the drain from a table at 0x2d1c20
+  (8 bytes each: channel regs, two thresholds, MFD, ?): entries 0 and 1 = **VIF1 (0x10009000), MFD 2**,
+  entry 2 = GIF (0x1000a000), MFD 0, so GIF gets ordinary DMA. Ring: RBOR 0x100000, RBSR 0x7fff0 (512 KB),
+  fromSPR MADR and VIF1 TADR both start at 0x100000. `FUN_00180270(ch, tadr)` starts VIF1 chain (CHCR 0x105,
+  TTE kept from `FUN_00233690`). VIF1's end interrupt (`FUN_00233430`, AddDmacHandler 1) steps a per-frame
+  state machine (restart drain / hand over to GIF). `FUN_00232c30`/`FUN_00232c88` suspend/resume all DMA via
+  D_ENABLEW and poll D_ENABLER. `FUN_002332a0` switches MFIFO off (MFD = 0) while VIF1 keeps STR.
+- `patches/ps2xRuntime-dmac-mfifo.patch` (ps2_memory.cpp/.h), applied by `tools\build_runtime.cmd`:
+  - fromSPR with MFD 2/3 writes into the ring, MADR wraps (`RBOR + (addr & RBSR)`), then drains;
+  - the drain channel (VIF1 for MFD 2, GIF for MFD 3) started in chain mode is no longer walked at once:
+    `drainMfifo()` consumes tags only while the ring has data (a tag + its following data must be complete),
+    TADR wraps, CNT/NEXT/END data comes from the ring, REF/REFS/REFE data from anywhere (wrapped if inside the
+    ring); END/REFE/IRQ+TIE complete the channel (D_STAT + DMAC handler), an empty ring leaves STR set.
+    Data goes to `processVIF1Data` (or GIF PATH3). CALL/RET in the ring are reported and end the chain.
+  - D_ENABLEW (0x1000F590) writes are mirrored to D_ENABLER (0x1000F520).
+  - Not modelled: D_STAT MEIS (bit 14, the runtime only keeps bits 0-9), DMA suspension itself
+    (transfers are synchronous anyway). Not yet checked against PCSX2.
+- **Result:** boot reaches the main loop `FUN_001969f8` and stays there: about **47 frames/s** (PAL wants 50),
+  1000+ frames in 21 s (frame counter = the per-frame sound call 0x100, logged by the override at 1/10/100/...).
+  Sound command 0x200 shows up. The window shows only a grey 560x224 block made of 10 vertical strips
+  (a framebuffer clear?) in the top half, unchanged from 6 s to 45 s.
+- The runtime's debug panel covers the picture: F1 toggles it.
+
 ## Next steps
-1. Milestone 4/5, MFIFO: confirm the setup first (where the game writes D_CTRL.MFD/RBOR/RBSR and which
-   channel drains: GIF 0x1000a000 or VIF1 0x10009000; check against PCSX2's DMAC registers). Then implement in
-   the runtime: fromSPR MADR wraps inside RBOR..RBOR+RBSR when MFD is set; the drain channel in source-chain
-   mode reads tags from the ring (TADR wraps the same way) and feeds the existing GIF/VIF1 path; TADR updates
-   so the game's free-space check sees progress. Store it as `patches/ps2xRuntime-mfifo.patch`.
-2. Sound for real (milestone 8): find how the game loads its IOP modules (sceSifRebootIop with
+1. Milestone 5, why only grey: run the game in PCSX2 (BIOS dumps in `E:\God Hand + Emulator\bios`, PAL
+   SCPH-70004 v12) to see what the first screens are (language / 60 Hz prompt? Namco logo?) and when; then
+   compare GS state: is the game drawing through VU1 (XGKICK) and the runtime dropping it, waiting on
+   a pad/memory-card/CD read, or showing a screen whose texture upload failed? The debug panel's GS, DMA/IO
+   and Threads tabs help. Main loop mode = `FUN_001979a0()` (switch at the end of FUN_001969f8).
+2. Frame pacing: 47 vs 50 fps. The loop busy-waits on `RCNT0_COUNT >= 0x724` and on vsync.
+3. Sound for real (milestone 8): find how the game loads its IOP modules (sceSifRebootIop with
    IOPRP243.IMG, then module buffers probably from DATA.BIN), extract the sound IRX and run it on ps2xIOP's
    emulated IOP. Then the override's sound part goes away.
-3. Re-export from Ghidra (3 late SDK renames) whenever Ghidra is next used for an export; rerun post-process.
-4. Later: export Ghidra's switch tables into `[jump_tables]` to cut the unresolved JR sites.
+4. Offer the MFIFO/D_ENABLE patch upstream (ran-j/PS2Recomp) once PCSX2 confirms it; ask the user first.
+5. Re-export from Ghidra (3 late SDK renames) whenever Ghidra is next used for an export; rerun post-process.
+6. Later: export Ghidra's switch tables into `[jump_tables]` to cut the unresolved JR sites.
+7. Watch: upstream keeps its RPC server pool at guest 0x01F10000, above the game's stack top (sp starts
+   ~0x1f00000). If a heap ever lives there, see the GoW `GuestReservedLayout` lesson.

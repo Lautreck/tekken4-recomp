@@ -19,8 +19,10 @@ Static recompilation of Tekken 4 (PS2) to a native Windows executable using PS2R
 - `external/ghidra_12.1.4_PUBLIC` - Ghidra (needs JDK 21) with `ghidra-emotionengine-reloaded` v2.1.38 and
   GhidraMCP 2.0 in `Ghidra/Extensions`. GhidraMCP serves on http://127.0.0.1:8080/ only while a CodeBrowser
   has the plugin enabled; bridge is `external/ghidramcp-venv/Scripts/ghidra-mcp.exe`
-- `external/pcsx2` - PCSX2 v2.8.2 portable (needs a BIOS dumped from the user's own console)
+- `external/pcsx2` - PCSX2 v2.8.2 portable (needs a BIOS dumped from the user's own console; the user's dumps are
+  in `E:\God Hand + Emulator\bios`, PAL SCPH-70004 v12 fits this game; never copy them into the repo)
 - `config/` - our PS2Recomp TOML + function maps (`function_map.csv` = Ghidra + `extra_functions.csv`; no game code)
+- `patches/` - our changes to PS2Recomp itself (hardware behaviour), applied by `tools\build_runtime.cmd`
 - `runtime/` - our game overrides (`*_overrides.cpp`), staged into ps2xRuntime by `tools\stage_generated.cmd`
 - `tools/` - our own helper scripts
 - `docs/status.md` - current state and next steps; read it first, update it at the end of a session

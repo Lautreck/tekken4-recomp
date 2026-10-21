@@ -26,7 +26,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   A fight loads and renders (Stage 1, Kazuya vs Law) but at ~7 fps: the VU1 interpreter (see "First fight").
   Native VU1 port started (stopped at the user's 95% usage report): the GoW VU1 engine is in (patch 11, 465/465
   tests), no native blocks generated yet (see "Native VU1 port").
-- **Resume at (Claude hit the usage limit 2026-10-21 ~22:30):** Grok works on the stall alone via the handoff (docs/ai/handoff.md, tools/grok_lead.ps1, started detached after Grok task cnt-qwc). On return: read logs/grok/lead_journal.json, `git log --oneline master..grok/wip`, review each diff (runtime/tekken4_overrides.cpp hook), run tests, merge what holds. Then "Native VU1 port" -> "Root cause found one level up".
+- **Resume at: "Native VU1 port" -> "STALL FIXED" (next: fight camera far too close vs PCSX2; fps 7-15).**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
@@ -577,6 +577,13 @@ Progress (2026-10-21, commits a31b778, fda9e02):
   mfifoVIF1transfer streams a tag's data as it arrives instead of waiting for the whole packet like our drainMfifo).
   Next: read ring 0x13d300-0x13d4a0 in PCSX2 (tools/pine.py) at the same point of the fight and compare; then fix
   drainMfifo (stream partial CNT/NEXT data, see PCSX2 Vif1_MFIFO.cpp) or the SPR packet source.
+- **STALL FIXED (2026-10-22):** the CNT qwc=4 is a double count: PS2Recomp's stubs sceVif1PkAddGsAD / closePacketGifTag
+  SET the open DMA tag's qwc (refreshPacketBuilderPendingCount) and the game's own close FUN_00292c18 then ADDs
+  ((cur-tag)>>4)-1 (found by Grok, logs/grok/cnt-qwc_20261021_221410.json). Fix: the existing closeDmaTag override
+  (SET instead of ADD, until now only at 0x292900 for the menus) is also registered at 0x292c18. Verified
+  (logs/stallfix_fight1): fps never drops to 0 (7-9 to 168 s), no [vu1-long] budget runs, fight at 00:11:85 timer 48,
+  menus and VS screen fine. Generic upstream fix (stubs should not touch the DMA tag qwc) = Grok task upstream-qwc.
+  NEW: in the fight the camera is far too close (fighters fill the screen; PCSX2 at the same time shows them full-body).
 - **Root cause found one level up (2026-10-21, PCSX2 ring dump):** the "REF qwc=0 / REFE" that ended the list are UNPACK
   data, not tags. The game's own packet is wrong in our run: `CNT qwc=4` with `DIRECT 2` in its tag-hi (2 qwords of GIF
   data: TEXFLUSH) also counts the next two REF texture-upload tags (`REF qwc=0x26 addr=0x6c2220` FLUSHE;DIRECTHL,

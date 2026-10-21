@@ -871,6 +871,10 @@ namespace tekken4
     void apply(PS2Runtime &runtime)
     {
         runtime.registerFunction(0x00292900u, closeDmaTag);
+        // The VIF1 packet builder's close (same code, other copy): FUN_002344e0's texture-flush CNT came out qwc 4
+        // instead of 2, VIF1 then read the next REF tags as data and the fight stalled ~4 s in (found by Grok, task
+        // cnt-qwc).
+        runtime.registerFunction(0x00292c18u, closeDmaTag);
         runtime.registerFunction(kSceMpegGetPicture, mpegGetPicture);
         runtime.registerFunction(kIpuImagesDecode, ipuImagesDecode);
         if (const char *presentLog = std::getenv("TEKKEN4_PRESENT_LOG"))

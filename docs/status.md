@@ -17,7 +17,8 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   line-doubled, full screen like PCSX2 (patch 03 = PR #375, see "Display line repeat").
   The intro movie now plays (see "Intro movie").
   Strip gaps fixed (patch 05, see "Sprite strip gaps").
-- **Resume at: "Next steps" #1, the picture "vibrates" (user report, 2026-10-21).**
+  Vibrating picture fixed (patch 06, see "Field offset").
+- **Resume at: "Next steps" #1, upstream patches 05/06, then the title screen after the movie.**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
@@ -409,6 +410,21 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
   the exact (fractional) width; integer-aligned sprites are unchanged. Tests 454/454; docs/img/movie_no_strip_gaps.png.
   Not upstreamed yet (PR + a test with a 63.5-wide sprite to do).
 
+## Field offset (session 3, 2026-10-21)
+- User report: the whole game vibrates. In interlaced FRAME mode the game draws one field per frame: its vsync
+  handler (0x22aaf8) reads CSR.FIELD and copies the even or odd lines of the 448-line back buffer into the
+  224-line display buffer (the copy's V starts at 0 or 1). A TV shows the odd field one line lower; patch 03
+  line-doubled both at the same place, so the picture moved by a line whenever the field changed (~40 times a
+  second, the game's frame rate).
+- **Patch 06:** the GS frontend records CSR.FIELD whenever a draw targets a displayed buffer (FRAME.FBP ==
+  DISPFB1/2.FBP) and passes it in the presentation request (`displayField`); in interlaced FRAME mode an odd
+  field is shown one display line lower. Keyed to the field the picture was drawn for, not the current vsync,
+  because below 60 fps a picture stays up for several fields. New test; 455/455.
+- Measured with TEKKEN4_PRESENT_LOG=<s> (override debug aid: brightness-weighted vertical centre of the presented
+  frame, min..max per second): menu 0.79 line of motion per frame without the offset, 0.21 with it (edges still
+  flicker by a line between fields, as on a TV); PAL60 dialog 0.01-0.06; logo 0 (logs/field_off, field_on,
+  field_final). A blend of the last two fields would remove the edge flicker too, if it is still visible.
+
 ## Publishing (from 2026-10-21)
 The user pre-authorized publishing every successful milestone on three channels:
 - **Project repo (public):** https://github.com/Lautreck/tekken4-recomp (`origin`, branch `master`). Commits use
@@ -434,12 +450,7 @@ The user pre-authorized publishing every successful milestone on three channels:
   https://claude.ai/artifact/CoN3nkpepFjyn5LSbPEQ7j (menu, PAL60 confirmation, Namco logo; four fixes).
 
 ## Next steps
-1. **Vibrating picture** (user saw the whole game shake). Likely cause, not checked yet: in interlaced FRAME mode
-   the game renders one field per frame and alternates the field's rows (the copy's V offset 0/1, chosen from
-   GS CSR.FIELD read in the vsync handler 0x22aaf8). A TV shows the odd field one line lower; patch 03 line-doubles
-   both fields at the same place, so the picture moves up/down by a line every frame. Fix in the presentation:
-   for FFMD=1, shift the odd field down by one display line (or weave/blend the two fields). Compare PCSX2.
-   Also upstream patch 05 (sprite edges) with a test.
+1. Upstream patches 05 (sprite edges, needs a test with a 63.5-wide sprite) and 06 (field offset) as PRs.
 2. After the movie: follow the game to the title screen and compare with PCSX2 (input to skip the movie: Start).
 3. Frame pacing: 38-47 vs 50/60 fps. The loop busy-waits on `RCNT0_COUNT >= 0x724` and on vsync.
 4. Sound for real (milestone 8): find how the game loads its IOP modules (sceSifRebootIop with

@@ -693,6 +693,50 @@ namespace tekken4
     {
         runtime.registerFunction(0x00292900u, closeDmaTag);
         runtime.registerFunction(kSceMpegGetPicture, mpegGetPicture);
+        if (const char *presentLog = std::getenv("TEKKEN4_PRESENT_LOG"))
+        {
+            // Debug aid for a shaking picture: for <seconds>, samples the presented frame every 5 ms and logs each
+            // change of its brightness-weighted vertical centre (in 1/100 line). A still picture that moves by
+            // about a line every frame shakes; edges alone flicker by a line between fields even on a TV.
+            const int seconds = std::atoi(presentLog);
+            PS2Runtime *rt = &runtime;
+            std::thread([rt, seconds]() {
+                std::vector<uint8_t> frame;
+                uint32_t w = 0u, h = 0u;
+                int last = -1, changes = 0, lo = 0, hi = 0;
+                const auto start = std::chrono::steady_clock::now();
+                while (std::chrono::steady_clock::now() - start < std::chrono::seconds(seconds))
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    if (!rt->gs().copyLatchedHostPresentationFrame(frame, w, h) || w <= 320u)
+                        continue;
+                    double sum = 0.0, weighted = 0.0;
+                    for (uint32_t y = 0; y < h; ++y)
+                    {
+                        const uint8_t *row = frame.data() + static_cast<size_t>(y) * w * 4u;
+                        uint32_t lum = 0u;
+                        for (uint32_t x = 0; x < w; x += 4u)
+                            lum += row[x * 4u] + row[x * 4u + 1u] + row[x * 4u + 2u];
+                        sum += lum;
+                        weighted += static_cast<double>(lum) * y;
+                    }
+                    const int centre = sum > 0.0 ? static_cast<int>(weighted / sum * 100.0) : -1;
+                    const int second = static_cast<int>(
+                        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+                    if (second != last)
+                    {
+                        if (last >= 0 && changes > 0)
+                            RUNTIME_LOG("[tekken4] present second " << last << ": centre " << lo << ".." << hi
+                                                                    << " (spread " << hi - lo << ")\n");
+                        last = second;
+                        lo = hi = centre;
+                        changes = 1;
+                    }
+                    lo = std::min(lo, centre);
+                    hi = std::max(hi, centre);
+                }
+            }).detach();
+        }
         if (const char *movieLog = std::getenv("TEKKEN4_MOVIE_LOG"))
         {
             g_movieLogLeft = std::atoi(movieLog);

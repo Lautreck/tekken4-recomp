@@ -33,6 +33,11 @@ function Send-Key([IntPtr]$h, [int]$vkCode, [int]$scanCode, [bool]$extended, [in
     [void][RunCaptureWin]::PostMessage($h, 0x0101, [IntPtr]$vkCode, [IntPtr]($flags -bor [int64]0xC0000000))
 }
 New-Item -ItemType Directory -Force $RunDir | Out-Null
+# Record how this run was made (keys, shots, debug switches) so it can be repeated and compared later.
+@("started  " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), "commit   " + (git -C $root rev-parse --short HEAD 2>$null),
+  "keys     " + ($Keys -join ','), "shots    " + ($Shots -join ',')) +
+  @(Get-ChildItem env: | Where-Object { $_.Name -match '^(TEKKEN4_|GOW_|PS2X_)' } | Sort-Object Name |
+    ForEach-Object { "env      $($_.Name)=$($_.Value)" }) | Set-Content -Encoding utf8 (Join-Path $RunDir "params.txt")
 . (Join-Path $PSScriptRoot "run_lock.ps1")
 Enter-RunLock $root "run_capture $RunDir"
 $buildDir = if ($env:TEKKEN4_BUILD_DIR) { $env:TEKKEN4_BUILD_DIR } else { "runtime" }  # Grok: out\grok

@@ -18,6 +18,7 @@
 #define NOUSER // CloseWindow, ShowCursor from windows.h
 #include <windows.h>
 #include <dbghelp.h> // SYMBOL_INFO only: the functions are loaded at run time
+#include <tlhelp32.h>
 #endif
 
 #include <algorithm>
@@ -210,7 +211,43 @@ namespace tekken4
     // Debug aid (TEKKEN4_PROFILE=<start s>:<seconds>): from <start> on, samples the game thread's instruction
     // pointer about every millisecond for <seconds>, then logs the functions it was in most often (names from the
     // PDB through dbghelp). The game thread is taken from the first per-frame sound call.
+    // TEKKEN4_PROFILE_THREADS=all also samples every other thread of the process (GS drawing threads, IOP, ...)
+    // and logs them as a second, combined list.
     std::atomic<HANDLE> g_gameThread{nullptr};
+
+    std::vector<HANDLE> otherProcessThreads(DWORD gameThreadId)
+    {
+        std::vector<HANDLE> threads;
+        const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        if (snapshot == INVALID_HANDLE_VALUE)
+            return threads;
+        THREADENTRY32 entry{};
+        entry.dwSize = sizeof(entry);
+        for (BOOL ok = Thread32First(snapshot, &entry); ok; ok = Thread32Next(snapshot, &entry))
+        {
+            if (entry.th32OwnerProcessID != GetCurrentProcessId() || entry.th32ThreadID == GetCurrentThreadId() ||
+                entry.th32ThreadID == gameThreadId)
+                continue;
+            if (HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, entry.th32ThreadID))
+                threads.push_back(h);
+        }
+        CloseHandle(snapshot);
+        return threads;
+    }
+
+    void sampleThread(HANDLE thread, std::unordered_map<DWORD64, uint32_t> &samples, uint32_t &total)
+    {
+        if (SuspendThread(thread) == static_cast<DWORD>(-1))
+            return;
+        CONTEXT c{};
+        c.ContextFlags = CONTEXT_CONTROL;
+        if (GetThreadContext(thread, &c))
+        {
+            ++samples[c.Rip];
+            ++total;
+        }
+        ResumeThread(thread);
+    }
 
     void captureGameThread()
     {
@@ -227,29 +264,26 @@ namespace tekken4
         const double start = std::atof(spec);
         const char *colon = std::strchr(spec, ':');
         const double seconds = colon ? std::atof(colon + 1) : 10.0;
-        std::thread([start, seconds]() {
+        const char *threadsEnv = std::getenv("TEKKEN4_PROFILE_THREADS");
+        const bool allThreads = threadsEnv && std::strcmp(threadsEnv, "all") == 0;
+        std::thread([start, seconds, allThreads]() {
             std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(start * 1000.0)));
             HANDLE thread = g_gameThread.load();
             if (!thread)
                 return;
-            std::unordered_map<DWORD64, uint32_t> samples;
-            uint32_t total = 0u;
+            std::vector<HANDLE> others = allThreads ? otherProcessThreads(GetThreadId(thread)) : std::vector<HANDLE>{};
+            std::unordered_map<DWORD64, uint32_t> samples, otherSamples;
+            uint32_t total = 0u, otherTotal = 0u;
             const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<int>(seconds * 1000.0));
             while (std::chrono::steady_clock::now() < end)
             {
-                if (SuspendThread(thread) != static_cast<DWORD>(-1))
-                {
-                    CONTEXT c{};
-                    c.ContextFlags = CONTEXT_CONTROL;
-                    if (GetThreadContext(thread, &c))
-                    {
-                        ++samples[c.Rip];
-                        ++total;
-                    }
-                    ResumeThread(thread);
-                }
+                sampleThread(thread, samples, total);
+                for (HANDLE other : others)
+                    sampleThread(other, otherSamples, otherTotal);
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
+            for (HANDLE other : others)
+                CloseHandle(other);
             HMODULE dbghelp = LoadLibraryA("dbghelp.dll");
             using SymInitializeFn = BOOL(WINAPI *)(HANDLE, PCSTR, BOOL);
             using SymFromAddrFn = BOOL(WINAPI *)(HANDLE, DWORD64, PDWORD64, void *);
@@ -260,37 +294,47 @@ namespace tekken4
             const HANDLE process = GetCurrentProcess();
             const bool symbols = symInitialize && symFromAddr && (symSetOptions ? (symSetOptions(0x2 /*UNDNAME*/ | 0x4 /*DEFERRED*/), true) : true) &&
                                  symInitialize(process, nullptr, TRUE);
-            std::unordered_map<std::string, uint32_t> byFunction;
-            for (const auto &[ip, count] : samples)
+            auto report = [&](const std::unordered_map<DWORD64, uint32_t> &hits, uint32_t count, const char *what,
+                              const char *tag) {
+                std::unordered_map<std::string, uint32_t> byFunction;
+                for (const auto &[ip, n] : hits)
+                {
+                    std::string name;
+                    if (symbols)
+                    {
+                        alignas(8) char buffer[sizeof(SYMBOL_INFO) + 512] = {};
+                        auto *info = reinterpret_cast<SYMBOL_INFO *>(buffer);
+                        info->SizeOfStruct = sizeof(SYMBOL_INFO);
+                        info->MaxNameLen = 511;
+                        DWORD64 displacement = 0;
+                        if (symFromAddr(process, ip, &displacement, info))
+                            name = info->Name;
+                    }
+                    if (name.empty())
+                    {
+                        std::ostringstream o;
+                        o << "0x" << std::hex << ip;
+                        name = o.str();
+                    }
+                    byFunction[name] += n;
+                }
+                std::vector<std::pair<uint32_t, std::string>> sorted;
+                for (const auto &[name, n] : byFunction)
+                    sorted.emplace_back(n, name);
+                std::sort(sorted.rbegin(), sorted.rend());
+                RUNTIME_LOG("[tekken4] " << tag << ": " << count << " samples of " << what << "\n");
+                for (size_t i = 0; i < sorted.size() && i < 30u; ++i)
+                    RUNTIME_LOG("[tekken4] " << tag << " " << std::fixed << std::setprecision(1)
+                                             << 100.0 * sorted[i].first / std::max<uint32_t>(count, 1u) << "% "
+                                             << sorted[i].second << "\n");
+            };
+            report(samples, total, "the game thread", "profile");
+            if (allThreads)
             {
-                std::string name;
-                if (symbols)
-                {
-                    alignas(8) char buffer[sizeof(SYMBOL_INFO) + 512] = {};
-                    auto *info = reinterpret_cast<SYMBOL_INFO *>(buffer);
-                    info->SizeOfStruct = sizeof(SYMBOL_INFO);
-                    info->MaxNameLen = 511;
-                    DWORD64 displacement = 0;
-                    if (symFromAddr(process, ip, &displacement, info))
-                        name = info->Name;
-                }
-                if (name.empty())
-                {
-                    std::ostringstream o;
-                    o << "0x" << std::hex << ip;
-                    name = o.str();
-                }
-                byFunction[name] += count;
+                std::ostringstream what;
+                what << others.size() << " other threads";
+                report(otherSamples, otherTotal, what.str().c_str(), "profile-threads");
             }
-            std::vector<std::pair<uint32_t, std::string>> sorted;
-            for (const auto &[name, count] : byFunction)
-                sorted.emplace_back(count, name);
-            std::sort(sorted.rbegin(), sorted.rend());
-            RUNTIME_LOG("[tekken4] profile: " << total << " samples of the game thread\n");
-            for (size_t i = 0; i < sorted.size() && i < 30u; ++i)
-                RUNTIME_LOG("[tekken4] profile " << std::fixed << std::setprecision(1)
-                                                 << 100.0 * sorted[i].first / std::max<uint32_t>(total, 1u) << "% "
-                                                 << sorted[i].second << "\n");
         }).detach();
     }
 #endif

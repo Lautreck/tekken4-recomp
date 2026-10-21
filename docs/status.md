@@ -24,13 +24,15 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Frame rate fixed: 60 fps on every screen so far (patch 09, see "GS speed").
   Character select works (IPU images decoded through FFmpeg, see "Character select").
   A fight loads and renders (Stage 1, Kazuya vs Law) but at ~7 fps: the VU1 interpreter (see "First fight").
-- **Resume at: "Next steps" #1 (VU1 speed for the fight).**
+  Native VU1 port started (stopped at the user's 95% usage report): the GoW VU1 engine is in (patch 11, 465/465
+  tests), no native blocks generated yet (see "Native VU1 port").
+- **Resume at: "Native VU1 port", step 1 (the generator's licence), then step 2 (capture).**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
 - Look at it: `powershell -File tools\run_capture.ps1 -Shots 8,25` (our build: hides the debug panel, screenshots +
   stdout in `logs\run_<time>\`), `powershell -File tools\pcsx2_capture.ps1 -Shots 15` (same in the user's PCSX2,
-  the ground truth). Runtime tests: `tools\build_tests.cmd` (PS2Recomp's ps2x_tests with all patches, 454/454).
+  the ground truth). Runtime tests: `tools\build_tests.cmd` (PS2Recomp's ps2x_tests with all patches, 465/465).
 - Not in git (rebuild/re-extract if lost): `external/` (clones + Ghidra + PCSX2 + MCP venv, see Pinned
   dependencies), `game/disc/` (7-Zip from the ISO), `generated/` (rerun `ps2_recomp config/analyzer_seed.toml`).
 
@@ -515,6 +517,33 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
   bit-exact replay check), VIF1 + VU1 on a worker thread pipelined with the GS frontend, and a VIF1 UNPACK fast path.
   Those live in their fork, not upstream. Tekken's ELF has 22 .DVP.overlay sections (its VU1 micro-programs).
 
+## Native VU1 port (session 3, 2026-10-21)
+Goal: the fight at full speed. Port of the God of War native port's lean VU1 backend (Waffle565/God-Of-War-Native-Port,
+branch `runtime`, GPL-3.0 like PS2Recomp and this repo). Done so far = **patch 11** (`patches/11-native-vu1.patch`):
+- Whole-file copies from GoW `origin/runtime` (our VU files were identical to their base c5a9d02 apart from line
+  endings): `ps2_vu1.h`, `ps2_vu1_native.h`, `ps2_perf.h` (diagnostics, header only), `ps2_vu1_core.cpp`,
+  `ps2_vu1_lower.cpp`, `ps2_vu1_upper.cpp`, `ps2_vu1_step.inl`, `ps2_vu1_native.inl`, and their `ps2_vu1_tests.cpp`.
+  Their `ps2_vu_tests.cpp` changes were left out (they test GoW's EE FPU / VU0 helpers we don't have).
+- `ps2_runtime.cpp`: `m_vu1.setDirectRegisterWrites(true)` like GoW (no register write queues, faster; needed by the
+  capture, which lives in `compiledProgramFor`); `GOW_VU1_COLAS=1` goes back to the queued model.
+- `ps2xRuntime/CMakeLists.txt`: `PS2X_VU1_MICROCODE_DIR` (folder of captured `.bin` micro memories, empty = interpreter
+  only) and `PS2X_VU1N_GEN` (default `<project>/tools/vu1/vu1n_gen.py`); generates `vu1n_part0..5.cpp` in the build
+  folder (`vu1n_heads.txt` next to the micro-memory folder = extra block heads) and links them into ps2EntryRunner.
+- With no blocks linked the engine is the interpreter (each pair first misses the native table). Tests 465/465.
+Next, in order:
+1. **The generator's licence.** `tools/vu1/vu1n_gen.py` is on GoW's `main` branch, which has no LICENSE file (only
+   `runtime` is GPL-3.0). Not committed here until that is clear: either ask Waffle565 (issue on their repo) or
+   point `-DPS2X_VU1N_GEN=external/God-Of-War-Native-Port/tools/vu1/vu1n_gen.py` at their checkout locally.
+2. **Capture:** run to the fight with `GOW_VU1_NATIVE_OFF=1` and `GOW_VU1_CAPTURA=<existing folder>` (use
+   `game/vu1/micro`, gitignored: the micro memories are game code). Writes `vu1_<fnv64>.bin` per distinct micro memory.
+3. Configure `-DPS2X_VU1_MICROCODE_DIR=<that folder>` (add it to `tools/build_runtime.cmd` when the folder exists),
+   build, run with `GOW_VU1N_DIAG=1` to list `[vu1n-miss]` pcs, put them in `game/vu1/vu1n_heads.txt`, rebuild.
+4. Verify: `GOW_VU1N_VERIFY=<runs>` (tolerance compare against the interpreter); bit-exact: record with a build
+   without blocks (`GOW_VU1N_RECORD=<file>`, `GOW_XGKICK_IMMEDIATE=1`), replay with the native build
+   (`GOW_VU1N_REPLAY=<file>`), expect "0 differ". Risks for Tekken: Q/P have no latency in native code, status flags
+   not modelled, missing heads. `GOW_VU1_STATS=1` prints VU1 time and interpreted steps every 5 s.
+5. Measure the fight (`TEKKEN4_PERF_LOG=1`, `TEKKEN4_PROFILE`), compare with PCSX2, then milestone 7.
+
 ## Publishing (from 2026-10-21)
 The user pre-authorized publishing every successful milestone on three channels:
 - **Project repo (public):** https://github.com/Lautreck/tekken4-recomp (`origin`, branch `master`). Commits use
@@ -546,7 +575,7 @@ The user pre-authorized publishing every successful milestone on three channels:
 ## Next steps
 1. Upstream patch 09 (GS speed + drawing threads) once PR #377 is in, as a follow-up PR.
 2. Milestone 7, a fight: it loads and renders (see "First fight") at ~7 fps, VU1-bound. Options, cheapest
-   first: (a) speed up the VU1 interpreter's hot paths (pipeline bookkeeping per pair); (b) VIF1 + VU1 on a worker
+   first (now doing (c), see "Native VU1 port"): (a) speed up the VU1 interpreter's hot paths (pipeline bookkeeping per pair); (b) VIF1 + VU1 on a worker
    thread (the GoW port's PS2X_GS_WORKER); (c) native VU1: translate Tekken's 22 micro-program overlays ahead of
    time (the GoW port's vu1n_gen.py approach, with a bit-exact replay check). Then compare the fight with PCSX2,
    test fight input (pad 1 moves), and look at pad 2 being reported as connected (PRESS P2 START, VS BATTLE).

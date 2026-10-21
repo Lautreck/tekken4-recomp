@@ -475,10 +475,11 @@ The user pre-authorized publishing every successful milestone on three channels:
 - PR #375 also carries patch 06 (second commit d9141f2, field offset; title and description updated, 447/447).
 - PR #377 https://github.com/ran-j/PS2Recomp/pull/377 = patches 05 + 07 + 08 with tests (three commits) (two strips 0..63.5 and 64..127.5),
   branch `sprite-edge-coverage`, worktree `external/ps2recomp-pr5`, 446/446. The test is only in the PR branch.
-- Not published yet: the intro movie (no milestone page; publish with milestone 6, the title screen).
 - **Milestone pages** (private until the user shares them from the page's Share menu): milestone 4 at
   https://claude.ai/artifact/BTDUfBQqwaDsn83wdRh2gf (our runtime screenshot next to PCSX2's), milestone 5 at
-  https://claude.ai/artifact/CoN3nkpepFjyn5LSbPEQ7j (menu, PAL60 confirmation, Namco logo; four fixes).
+  https://claude.ai/artifact/CoN3nkpepFjyn5LSbPEQ7j (menu, PAL60 confirmation, Namco logo; four fixes). Milestone 6 at
+  https://claude.ai/artifact/CGjVKCtqc6WGA2aat476gt (boot to main menu, ours next to PCSX2; PRs #375-#377).
+  A session-3 progress page for the user: https://claude.ai/artifact/Y2iCxSTrfwM5mY5rWZxWK2.
 
 ## Next steps
 1. Milestone 7, a fight: ARCADE (Down, Cross), character select, then the stage. Compare with PCSX2 at each step.

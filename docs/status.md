@@ -11,7 +11,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   (see "First run"); 350 missing functions added (4 constructors + 346 vtable/callback targets) (see "Missing
   functions fix"); silent sound-driver override (see "Sound driver override"); MFIFO + D_ENABLE runtime
   patch (see "MFIFO + D_ENABLE patch"). Milestone 4 published (see "Publishing").
-- **Resume at: milestone 5, menu fully drawn; left: top-half placement, garbage squares, PAL60 -> Namco logo** (see "Result: the whole display-mode menu renders").
+- **Resume at: milestone 5 done; next: field-mode display scaling (picture in the top half, GS memory below), then what follows the logo vs PCSX2** (see "Milestone 5 reached").
 - **Session 3 goal: milestone 5.** The first screen (display-mode menu) draws its 10-strip box, but grey, without
   text, in the top half only. Start from "Next steps" #1.
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
@@ -30,8 +30,8 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
 - [x] 2. PS2Recomp host tools build from source (`tools\build_ps2recomp_tools.cmd`)
 - [x] 3. Ghidra analysis + function map exported, recompiled output compiles and links into ps2EntryRunner
 - [x] 4. Boots past startup without crashing (main loop runs at ~47 fps, 2026-10-21)
-- [ ] 5. Something on screen (Namco logo / first menu) - GS work starts here
-      (so far: a grey cleared block only)
+- [x] 5. Something on screen (Namco logo / first menu) (2026-10-21: the display-mode menu renders, PAL60 picked
+      as controller 1, confirmation answered, Namco logo shows; vertical scaling still off)
 - [ ] 6. Menus and controller input
 - [ ] 7. A fight: two characters on a stage, correct rendering, steady frame rate
 - [ ] 8. Sound, saves, PC features
@@ -336,6 +336,12 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
   the full PAL frame), three garbled squares at the bottom left, ~44 fps, then the Namco logo after PAL60.
 - Patches renamed so they apply in order: 01-ps2xRuntime-dmac-mfifo.patch (= PR #372), 02-ps2xRuntime-dma-
   fixes.patch (toSPR chain, empty-chain completion, PATH2 stream). Checked on a clean upstream worktree.
+- **Milestone 5 reached (2026-10-21).** `tools/run_capture.ps1 -Keys "10:Down","12:Cross","15:Left","16.5:Cross"`
+  (posted key presses, runtime maps arrows/X/Enter to pad 1): Down -> PAL60, Cross -> "Display mode changed to
+  [PAL60 / 60Hz]. Start game? Yes/No" (No preselected), Left + Cross = Yes -> **Namco logo** at ~20 s, then a
+  white screen at ~34 s (next scene; check against PCSX2). Screenshots: docs/img/m5_menu_pal60.png,
+  m5_confirm_yes.png, m5_namco_logo.png. Still off: only the top half of the picture is used and the rest
+  shows other GS memory (field-mode display scaling), stray texture blocks, ~38-44 fps.
 - Also in the dma-chain patch: a chain that ends without data (lone END/REFE/IRQ tag) now completes its
   channel (upstream left STR set and raised no interrupt). Correct per hardware, but didn't fix the hang.
 - Side findings: the menu text isn't in the ELF; the IOP module package is embedded LZ-compressed and

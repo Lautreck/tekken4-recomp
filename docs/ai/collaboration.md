@@ -59,6 +59,8 @@ Goal (user): one seamless team, each keeps its specialisation.
   status "Publishing". Every Grok result json keeps turns / cost_usd / seconds (cost claims must be checkable).
 
 ## WHEN CLAUDE IS OUT OF USAGE
+- Hand off at ~70% of Claude's usage, not 85%: the remaining ~30% pays for the supervision checks (every 15 min,
+  <15k tokens each). 85% = hard stop for the final save. Any handoff edit is committed and the driver relaunched before anything else.
 - Claude commits+pushes everything first (restore point), writes docs/ai/handoff.md (steps: ### STEP name | ask|work | owned files, then the prompt blocks), and starts `powershell -File tools\grok_lead.ps1`.
 - The driver runs the steps in order through grok_task.ps1 and stops at the first failure (unparsed JSON, contra[] non-empty, work step without owned-file change); journal logs\grok\lead_journal.json.
 - Grok never commits; on return Claude reads the journal, reviews each diff, runs the tests, commits what holds and restores the rest.

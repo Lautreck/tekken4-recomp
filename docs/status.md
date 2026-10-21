@@ -580,7 +580,11 @@ is not personal (never the disc files, ISO or BIOS). Heavy analysis / coding job
   work: Grok edits in its own clone `~\.grok\worktrees\claude-troubleshoot-tekken-4-recomp\<n>` (tracked files
   only: no game\, external\, logs\, so it cannot build); review with `git -C <clone> diff`, remove with
   `grok worktree rm <id>`.
-- Headless runs cannot approve anything: a refused tool ends the run without a final answer (the first two tasks).
+- Headless runs cannot approve anything: a refused tool ends the run without a final answer (all three tasks so far:
+  python in plan mode twice, then the Write tool for a script in logs/grok/). Fix next: allow writes limited to
+  logs/grok/ in ask mode (try `--allow "Write(logs/grok/**)"`), or tell it to write scripts with python only.
+- Grok "vu1-vi12" (cut off, partial): vi12 is used as the count mask once (0x3390) and then overwritten inside the
+  same program, so the mask at the next start of 0x32a0 is whatever an earlier run left. Rerun it once fixed.
 - Findings so far: the pad-2 bug is `scePadGetState` (external/PS2Recomp/.../Kernel/Stubs/Pad.cpp:453) returning
   "stable" for any opened port without checking that a pad is connected, so port 2 looks plugged in (PRESS P2 START,
   VS BATTLE). Fix next: report port 2 disconnected unless a second host pad exists (generic, a PS2Recomp patch).

@@ -26,7 +26,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   A fight loads and renders (Stage 1, Kazuya vs Law) but at ~7 fps: the VU1 interpreter (see "First fight").
   Native VU1 port started (stopped at the user's 95% usage report): the GoW VU1 engine is in (patch 11, 465/465
   tests), no native blocks generated yet (see "Native VU1 port").
-- **Resume at: "Native VU1 port", step 2 (capture).** The generator commit is local only (see step 1).
+- **Resume at: "Native VU1 port", step 2 (capture).**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
@@ -532,8 +532,8 @@ branch `runtime`, GPL-3.0 like PS2Recomp and this repo). Done so far = **patch 1
 - With no blocks linked the engine is the interpreter (each pair first misses the native table). Tests 465/465.
 Next, in order:
 1. **The generator's licence (deferred by the user).** `tools/vu1/vu1n_gen.py` (copied unchanged from GoW's `main`
-   branch, which has no LICENSE file; only `runtime` is GPL-3.0) is committed locally at the user's request but not
-   pushed, since the GitHub repo is public. Settle it (ask Waffle565) before pushing that commit.
+   branch, which has no LICENSE file; only `runtime` is GPL-3.0) is committed at the user's request; the user made the
+   GitHub repo private (2026-10-21). Settle the licence (ask Waffle565) before making the repo public again.
 2. **Capture:** run to the fight with `GOW_VU1_NATIVE_OFF=1` and `GOW_VU1_CAPTURA=<existing folder>` (use
    `game/vu1/micro`, gitignored: the micro memories are game code). Writes `vu1_<fnv64>.bin` per distinct micro memory.
 3. Configure `-DPS2X_VU1_MICROCODE_DIR=<that folder>` (add it to `tools/build_runtime.cmd` when the folder exists),
@@ -546,7 +546,7 @@ Next, in order:
 
 ## Publishing (from 2026-10-21)
 The user pre-authorized publishing every successful milestone on three channels:
-- **Project repo (public):** https://github.com/Lautreck/tekken4-recomp (`origin`, branch `master`). Commits use
+- **Project repo (private since 2026-10-21, the user's choice; was public):** https://github.com/Lautreck/tekken4-recomp (`origin`, branch `master`). Commits use
   `Pablo <8440795+Lautreck@users.noreply.github.com>` (set in this repo's git config; history was rewritten to it
   before the first push). Never push game files, Ghidra DBs, generated C++, BIOS or disc data.
 - **Upstream PRs:** fork https://github.com/Lautreck/PS2Recomp (remote `fork` in `external/PS2Recomp`).

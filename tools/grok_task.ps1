@@ -8,8 +8,10 @@ param(
     [string]$Effort = "",
     [int]$MaxTurns = 150
 )
-# Hands one task to Grok (xAI's Grok Build CLI, `grok`) so it works in parallel with Claude, and saves the result in
-# logs\grok\<Name>_<time>.md (prompt, answer, files changed in both repos).
+# Hands one task to Grok (xAI's Grok Build CLI, `grok`) so it works in parallel with Claude. Grok <-> Claude exchanges
+# are AI-to-AI: prompts are terse keyed blocks (TASK / CTX / FACTS / ASK / LIMITS) and Grok answers with a JSON object
+# forced by --json-schema (verdict, conf, facts[{c,ref,v}], fix[{where,change}], checks[], open[]). Result:
+# logs\grok\<Name>_<time>.json = {task, mode, answer, files_changed, turns, cost_usd, seconds, session}.
 #   ask:  analysis in the project (second opinions, reviews, research): reads anything, runs commands, writes only
 #         under logs\ (its scripts and notes in logs\grok\).
 #   work: a change in the main project, limited to the files given with -Owns (Claude keeps off them meanwhile): it
@@ -27,12 +29,12 @@ if ($PromptFile) { $Prompt = Get-Content -Raw -Encoding UTF8 $PromptFile }
 if (-not $Prompt) { "no prompt (-Prompt or -PromptFile)"; exit 1 }
 if ($Mode -eq "work" -and $Owns.Count -eq 0) { "work mode needs -Owns <files the task may modify>"; exit 1 }
 # Grok does not load the project's CLAUDE.md until the project is trusted, so the rules come with every task.
-$rules = "You work on the Tekken 4 (PS2, PAL SCES-50878) static recompilation in this repository, alongside Claude, who " +
-    "works on other files at the same time. Before anything else read CLAUDE.md (project rules, follow them) and " +
-    "docs/status.md (current state). Never commit or publish game files, Ghidra databases, captured VU1 micro memories " +
-    "or generated C++; never send the disc files, ISO or BIOS anywhere. PCSX2 is the ground truth for hardware " +
-    "behaviour. Do not run git commands that change a repository (Claude commits). Analysis scripts and notes go under " +
-    "logs/grok/; run Python with python -I. Say what you verified and what you assume."
+$rules = "PROJECT: Tekken 4 PS2 PAL SCES-50878 static recomp (PS2Recomp). PEER: Claude works on other files now. FIRST: read " +
+    "CLAUDE.md (rules, obey) + docs/status.md (state). NEVER: commit/publish game files, Ghidra DBs, VU1 micro memories, " +
+    "generated C++; send disc/ISO/BIOS anywhere; git commands that change a repo (Claude commits). TRUTH: PCSX2 behaviour. " +
+    "PY: python -I. SCRATCH: logs/grok/. OUTPUT: read by an AI, not a human: max density, no narration, no pleasantries, " +
+    "no markdown; only the final JSON object counts (interim turns discarded); every fact needs ref (file:line | addr | " +
+    "url | log:line) and v=true only if you checked it yourself this session; conf = 0..1 for the verdict."
 # Top-level entries the task may not write: everything but logs\ and the folders holding its own files.
 $open = @("logs") + @($Owns | ForEach-Object { ($_ -replace '\\', '/').Split('/')[0] })
 $deny = @()
@@ -44,22 +46,28 @@ foreach ($e in Get-ChildItem -Force $root | Where-Object { $_.Name -ne ".git" -a
 foreach ($c in "commit", "push", "reset", "checkout", "switch", "restore", "clean", "stash", "rebase", "merge", "apply",
     "am", "rm", "mv", "add", "tag", "branch -d", "branch -D", "worktree") { $deny += "Bash(git ${c}:*)" }
 if ($Mode -eq "work") {
-    $rules += " You may modify only these files: " + ($Owns -join ", ") + " (plus your notes under logs/grok/). Build " +
-        "with cmd /c tools\build_runtime.cmd (TEKKEN4_BUILD_DIR=grok is set: it builds external\PS2Recomp\out\grok) and " +
-        "run the game with powershell -File tools\run_capture.ps1 -RunDir logs\grok\$Name-<n> (same build). On the " +
-        "display-mode menu always pick PAL60 (keys 10:Down, 12:Cross). End with a summary: files changed, how you " +
-        "tested, results."
-    $env:TEKKEN4_BUILD_DIR = "grok"
+    $rules += " MODE: work. EDIT ONLY: " + ($Owns -join ", ") + " (+ logs/grok/). BUILD: cmd /c tools\build_runtime.cmd " +
+        "(TEKKEN4_BUILD_DIR=grok set -> external\PS2Recomp\out\grok). RUN: powershell -File tools\run_capture.ps1 -RunDir " +
+        "logs\grok\$Name-<n> -Keys ... -Shots ... (same build; display-mode menu: always PAL60 = 10:Down,12:Cross). " +
+        "files_changed + checks must list what you changed and how you tested."
 } else {
-    $rules += " Do not modify repository files."
+    $rules += " MODE: ask. No repository edits."
 }
-# The prompt goes through a file: Windows PowerShell mangles double quotes inside native-command arguments.
+# The answer shape, forced by --json-schema (compact keys: c = claim, v = verified by you).
+$schema = '{"type":"object","properties":{' +
+    '"verdict":{"type":"string"},"conf":{"type":"number"},' +
+    '"facts":{"type":"array","items":{"type":"object","properties":{"c":{"type":"string"},"ref":{"type":"string"},"v":{"type":"boolean"}},"required":["c","ref","v"]}},' +
+    '"fix":{"type":"array","items":{"type":"object","properties":{"where":{"type":"string"},"change":{"type":"string"}},"required":["where","change"]}},' +
+    '"checks":{"type":"array","items":{"type":"string"}},"open":{"type":"array","items":{"type":"string"}},' +
+    '"files_changed":{"type":"array","items":{"type":"string"}}},' +
+    '"required":["verdict","conf","facts","fix","checks","open","files_changed"]}'
+# Prompt via a file and \" in the schema: Windows PowerShell mangles double quotes inside native-command arguments.
 $logDir = Join-Path $root "logs\grok"
 New-Item -ItemType Directory -Force $logDir | Out-Null
 $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $promptPath = Join-Path $logDir ("{0}_{1}.prompt.md" -f $Name, $stamp)
 [System.IO.File]::WriteAllText($promptPath, $Prompt, (New-Object System.Text.UTF8Encoding $false))
-$grokArgs = @("--prompt-file", $promptPath, "--cwd", $root, "--rules", $rules, "--output-format", "plain",
+$grokArgs = @("--prompt-file", $promptPath, "--cwd", $root, "--rules", $rules, "--json-schema", ($schema -replace '"', '\"'),
     "--max-turns", "$MaxTurns", "--permission-mode", "auto")
 foreach ($d in $deny) { $grokArgs += @("--deny", $d) }
 if ($Model) { $grokArgs += @("--model", $Model) }
@@ -67,14 +75,32 @@ if ($Effort) { $grokArgs += @("--reasoning-effort", $Effort) }  # heavy analysis
 $repos = @($root, (Join-Path $root "external\PS2Recomp"))
 $before = @{}
 foreach ($r in $repos) { $before[$r] = @(git -C $r status --short 2>$null) }
-$log = Join-Path $logDir ("{0}_{1}.md" -f $Name, $stamp)
 $t0 = Get-Date
-$answer = & $grok @grokArgs 2>&1 | ForEach-Object { "$_" }
-$body = @("# Grok task: $Name ($Mode)", "", "## Prompt", "", $Prompt, "", "## Answer", "", ($answer -join "`n"), "", "## Files changed")
+$raw = (& $grok @grokArgs 2>&1 | ForEach-Object { "$_" }) -join "`n"
+# text holds one JSON object per assistant turn: the last complete one is the answer.
+$answer = $null; $meta = $null
+try {
+    $meta = $raw.Substring($raw.IndexOf('{'), $raw.LastIndexOf('}') - $raw.IndexOf('{') + 1) | ConvertFrom-Json
+    $text = [string]$meta.text
+    $depth = 0; $start = -1; $last = $null; $inStr = $false; $esc = $false
+    for ($i = 0; $i -lt $text.Length; $i++) {
+        $ch = $text[$i]
+        if ($inStr) { if ($esc) { $esc = $false } elseif ($ch -eq '\') { $esc = $true } elseif ($ch -eq '"') { $inStr = $false }; continue }
+        if ($ch -eq '"') { $inStr = $true } elseif ($ch -eq '{') { if ($depth -eq 0) { $start = $i }; $depth++ }
+        elseif ($ch -eq '}') { $depth--; if ($depth -eq 0 -and $start -ge 0) { $last = $text.Substring($start, $i - $start + 1) } }
+    }
+    if ($last) { $answer = $last | ConvertFrom-Json }
+} catch { }
+$changed = @()
 foreach ($r in $repos) {
-    $new = @(git -C $r status --short 2>$null | Where-Object { $before[$r] -notcontains $_ })
-    $body += @("", "$r", '```', ($(if ($new.Count) { $new -join "`n" } else { "(none new)" })), '```')
+    $rel = if ($r -eq $root) { "" } else { "external/PS2Recomp/" }
+    $changed += @(git -C $r status --short 2>$null | Where-Object { $before[$r] -notcontains $_ } | ForEach-Object { $rel + $_.Substring(3) })
 }
-$body += @("", ("({0:N0} s)" -f ((Get-Date) - $t0).TotalSeconds))
-$body -join "`n" | Out-File -Encoding utf8 $log
-"Grok task $Name done in {0:N0} s: $log" -f ((Get-Date) - $t0).TotalSeconds
+$result = [ordered]@{
+    task = $Name; mode = $Mode; answer = $(if ($answer) { $answer } else { $raw }); files_changed = $changed
+    turns = $(if ($meta) { $meta.num_turns }); cost_usd = $(if ($meta) { $meta.total_cost_usd })
+    seconds = [int]((Get-Date) - $t0).TotalSeconds; session = $(if ($meta) { $meta.sessionId })
+}
+$log = Join-Path $logDir ("{0}_{1}.json" -f $Name, $stamp)
+[System.IO.File]::WriteAllText($log, ($result | ConvertTo-Json -Depth 12 -Compress), (New-Object System.Text.UTF8Encoding $false))
+"grok $Name done {0}s parsed={1}: $log" -f $result.seconds, [bool]$answer

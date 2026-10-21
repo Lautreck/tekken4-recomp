@@ -26,7 +26,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   A fight loads and renders (Stage 1, Kazuya vs Law) but at ~7 fps: the VU1 interpreter (see "First fight").
   Native VU1 port started (stopped at the user's 95% usage report): the GoW VU1 engine is in (patch 11, 465/465
   tests), no native blocks generated yet (see "Native VU1 port").
-- **Resume at: "Native VU1 port", "Now / next" (fight stalls ~4 s in: VU1 program 0x32a0 loops; not a native bug).**
+- **Resume at: "Native VU1 port", "Cause traced" -> Next (PCSX2 ring read at 0x13d350, then the drainMfifo fix).**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
@@ -562,10 +562,31 @@ Progress (2026-10-21, commits a31b778, fda9e02):
   (134 s there, it is slower). The loop counter is `vi8 = vi5 & vi12` (pc 0x3390; vi5 = count from the packet header,
   vi12 = mask, normally 0x7fff), decremented per pass until 0: in the stalled runs vi12 is 0 at entry (VI registers
   carry over between VU1 programs), so the count is 0 and the loop wraps 65535 times.
-- **Now / next:** find why vi12 (or the header count) is 0 at entry to 0x32a0 from ~4 s into the fight: which program
-  sets vi12 (Grok task "vu1-vi12" in logs/grok/), what the EE sends that frame (VIF1 packets: MSCAL order, a VIF
-  STROW/STMOD/UNPACK problem, or an MSCNT/MSCALF the runtime handles differently), compared with PCSX2 at the same
-  moment (its debugger: VU1 registers at MSCAL 0x32a0).
+- **Cause traced (2026-10-21, late), not fixed yet.** The garbage header comes from the VIF1 stream, not VU1:
+  1. VIF1 runs in MFIFO mode (ring D_RBOR 0x100000, D_RBSR 0x7FFF0, filled by fromSPR copies of SPR packets). A
+     frame's list ends with REF qwc=0 at 0x13d330 + REFE at 0x13d340; the fromSPR copy that carried them (qwc 0x18 from
+     SPR 0x0050, ring 0x13d310-0x13d490) also put 20 more qwords after the REFE.
+  2. The game (FUN_00180270, per Grok) restarts VIF1 with TADR = 0x13d350 (qword after the REFE). The "tag" there is
+     NEXT qwc=0x3000 (192 KB, more than ever arrives), so our drain waits there forever while new packets arrive behind
+     it (ring write pos 0x13d490 -> 0x142f70).
+  3. The game's recovery path (FUN_002332a0): D_ENABLEW suspend, VIF1 CHCR STR off, resume, D_CTRL.MFD = 0, VIF1 CHCR
+     start: a normal chain at 0x13d350 reads NEXT 0x3000 = 192 KB of ring memory as VIF data; its DMA tags parse as VIF
+     codes and one of them is STMOD 2 (difference mode), which corrupts the next UNPACKs (the 0x32a0 header).
+  On a real PS2 that path cannot be taken this way, so the open question is what sits at 0x13d350 on hardware when
+  VIF1 restarts (is our SPR packet tail different, or does hardware treat that NEXT differently: PCSX2's
+  mfifoVIF1transfer streams a tag's data as it arrives instead of waiting for the whole packet like our drainMfifo).
+  Next: read ring 0x13d300-0x13d4a0 in PCSX2 (tools/pine.py) at the same point of the fight and compare; then fix
+  drainMfifo (stream partial CNT/NEXT data, see PCSX2 Vif1_MFIFO.cpp) or the SPR packet source.
+- **Patch 12** (`patches/12-ps2xRuntime-vif1-carry-and-mfifo-wait.patch`, tests 466/466): (a) a VIF1 command whose
+  payload runs past the end of a DMA transfer (UNPACK / MPG / STROW / STCOL / STMASK) is kept and finished with the next
+  transfer, like PCSX2 (before: the rest was parsed as VIF codes; Tekken does this when a drain ends mid-command); (b) a
+  CHCR write to the MFIFO channel while it waits is ignored unless it clears STR or the DMAC is suspended (PCSX2
+  DmaExec). Neither fixes the stall by itself.
+- Debug instrumentation used to find it: `patches/debug/vif1-dma-trace.patch` (not applied by build_runtime; apply on
+  top of 01-12 with `git -C external/PS2Recomp apply ../../patches/debug/vif1-dma-trace.patch`): with
+  GOW_VU1N_CHECKLONG=1 it prints, at the first invalid VIF1 code ("[vif1-bad]"), the last VIF1 codes, the DMA tags
+  read (chain walker c / MFIFO drain m), drain ends with the tag at TADR, fromSPR ring copies, VIF1 CHCR / TADR /
+  D_CTRL / D_ENABLEW writes, plus VU1 run history and the input header at TOP for runs that hit the budget.
 - New debug switches in patch 11: `GOW_VU1_LONGRUNS=<cycles>` (log runs longer than that), `GOW_VU1N_CHECKLONG=1`.
 
 ## Grok in the pipeline (from 2026-10-21)

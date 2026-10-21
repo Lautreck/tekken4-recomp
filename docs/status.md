@@ -26,7 +26,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   A fight loads and renders (Stage 1, Kazuya vs Law) but at ~7 fps: the VU1 interpreter (see "First fight").
   Native VU1 port started (stopped at the user's 95% usage report): the GoW VU1 engine is in (patch 11, 465/465
   tests), no native blocks generated yet (see "Native VU1 port").
-- **Resume at: "Native VU1 port", step 2 (capture).**
+- **Resume at: "Native VU1 port", "Now" (fight drops to 0 fps after ~1 min with native VU1).**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
@@ -542,7 +542,21 @@ Next, in order:
    without blocks (`GOW_VU1N_RECORD=<file>`, `GOW_XGKICK_IMMEDIATE=1`), replay with the native build
    (`GOW_VU1N_REPLAY=<file>`), expect "0 differ". Risks for Tekken: Q/P have no latency in native code, status flags
    not modelled, missing heads. `GOW_VU1_STATS=1` prints VU1 time and interpreted steps every 5 s.
-5. Measure the fight (`TEKKEN4_PERF_LOG=1`, `TEKKEN4_PROFILE`), compare with PCSX2, then milestone 7.
+5. Measure the fight (`TEKKEN4_PERF_LOG=200` = seconds to log, `TEKKEN4_PROFILE`), compare with PCSX2, then milestone 7.
+
+Progress (2026-10-21, commits a31b778, fda9e02):
+- Capture done: **one** micro memory (`game/vu1/micro/vu1_62802e7b8abf4848.bin`, 0x0-0x3e88 = the 18-overlay group):
+  Tekken uploads its whole VU1 set once. 220 blocks, 0 unsupported. `toolsuild_runtime.cmd` now links them.
+- Fixed with `GOW_VU1N_VERIFY` + `GOW_VU1N_BISECT=1` + `GOW_VU1N_DUMP=1` (new: bisect any mismatch):
+  (1) vf0 corrupted: Tekken's backface test is `OPMULA.xyz ACC,vf21,vf22` + `OPMSUB.xyz vf0,vf22,vf21` (flags only);
+  native callouts skipped the interpreter's per-pair vf0/vi0 restore. (2) OPMULA/OPMSUB generated natively so FMAND
+  sees their MAC flags (it read an older MUL's).
+- Left in verify: "mac"-only end-state differences, and single ADC words where the interpreter recomputes a nearly
+  cancelling MSUB from the unrounded product while native subtracts the rounded one (edge-on triangles; harmless).
+- **Now:** fight at 11-25 fps (was ~7), but after ~1 min of fight it falls to 0 fps: VU1 runs take the whole frame
+  again (`[vu1-stats]` ~17k runs per 5 s, ~40k cycles each = a native program running to its cycle budget).
+  Next: find that program (GOW_VU1N_DIAG / bisect on a run started in the fight), likely a loop exit test on flags,
+  Q latency or a missing block head.
 
 ## Publishing (from 2026-10-21)
 The user pre-authorized publishing every successful milestone on three channels:

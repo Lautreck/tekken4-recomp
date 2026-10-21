@@ -51,5 +51,7 @@ never commit/publish game files, Ghidra DBs, VU1 micro memories, generated C++; 
 - G1 no fix unless FACTS hold the numbers it must match; else the missing lines -> open[], conf<=0.5
 - G2 one mechanism in the verdict; another mechanism fitting the same bytes -> open[]
 - G3 work mode: DOD met -> notes + final JSON, stop (no extra run, no extra reading)
+- G4 CPU: before a big script (>~1 min CPU: ELF / DATA.BIN / generated C++ scans) check logs\run.lock; while it holds
+  a live PID (a timed game / PCSX2 run) wait or do light work first. Builds wait by themselves (build_runtime.cmd)
 - contra[]: every contradiction between your fix/claims and the given logs or code (empty only if you checked)
 - ROLES / handoff / verification / run lock / disagreement: docs/ai/collaboration.md

@@ -13,6 +13,9 @@ set "PATH=%ProgramFiles%\CMake\bin;%LOCALAPPDATA%\Microsoft\WinGet\Links;%PATH%"
 set "SRC=%~dp0..\external\PS2Recomp"
 if not defined TEKKEN4_BUILD_DIR set "TEKKEN4_BUILD_DIR=runtime"
 set "BUILD=%SRC%\out\%TEKKEN4_BUILD_DIR%"
+rem A Grok build is CPU-heavy side work: it waits while a timed game / PCSX2 run holds logs\run.lock
+rem (docs/ai/collaboration.md, RESOURCES).
+if /i "%TEKKEN4_BUILD_DIR%"=="grok" powershell -NoProfile -Command "& { . '%~dp0run_lock.ps1'; Wait-RunLockFree '%~dp0..' }"
 rem Our runtime patches (patches\*.patch, against the pinned PS2Recomp commit, applied in name order). They stack,
 rem so when the last one is already in the tree they all are (an earlier one alone may not reverse any more, its
 rem context changed by a later one); otherwise already-applied ones are skipped.

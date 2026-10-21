@@ -33,8 +33,10 @@ Goal (user): one seamless team, each keeps its specialisation.
 - Run lock: one of run_capture / pcsx2_capture / pine at a time (logs/run.lock, taken by the run scripts).
 - Builds: out\runtime (Claude) and out\grok (Grok) may overlap only while no -Owns source file is mid-edit; Claude does
   not build out\runtime while a Grok-owned file is dirty (wait for its JSON or set the file aside).
-- In flight during a fight run: at most 1 Grok work task + 2 Grok ask tasks (CPU); otherwise as many ask tasks as are
-  useful (user: "as many as wise").
+- Grok tasks in flight: no cap (user: "as many as wise"); Grok's thinking runs on xAI servers, its tools on the user's
+  PC. What must not overlap a timed game / PCSX2 run (keys are pressed at fixed seconds, fps is measured) is CPU-heavy
+  side work: builds (a Grok build waits for logs\run.lock to be free: build_runtime.cmd) and big scripts (scans of the
+  ELF / DATA.BIN / generated C++ taking more than ~1 min: check logs\run.lock first, wait while it is held).
 - Ask mode cannot run the game or PCSX2 (deny rules); work mode may, holding the run lock.
 - Permissions are frozen at auto + deny (e20d920 + later deny additions): no mode changes on live tasks.
 

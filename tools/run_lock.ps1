@@ -20,6 +20,25 @@ function Enter-RunLock([string]$Root, [string]$What)
     "$PID $What" | Set-Content -Encoding ascii $lock
 }
 
+# Waits (without taking it) until no run holds the lock: CPU-heavy side work (Grok builds, big scans) uses this so a
+# timed game run is not slowed down.
+function Wait-RunLockFree([string]$Root)
+{
+    $lock = Join-Path $Root "logs\run.lock"
+    $waited = 0
+    while (Test-Path $lock)
+    {
+        $holder = Get-Content $lock -ErrorAction SilentlyContinue | Select-Object -First 1
+        $holderPid = 0
+        if (-not $holder -or -not [int]::TryParse(($holder -split ' ')[0], [ref]$holderPid) -or
+            -not (Get-Process -Id $holderPid -ErrorAction SilentlyContinue)) { return }
+        if ($waited -eq 0) { "a run holds the lock, waiting before starting: $holder" }
+        Start-Sleep -Seconds 5
+        $waited += 5
+        if ($waited -ge 1800) { "run lock still held after 30 min, going ahead: $holder"; return }
+    }
+}
+
 function Exit-RunLock([string]$Root)
 {
     $lock = Join-Path $Root "logs\run.lock"

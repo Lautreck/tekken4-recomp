@@ -19,7 +19,9 @@ for %%P in ("%~dp0..\patches\*.patch") do set "LASTPATCH=%%~fP"
 git -C "%SRC%" apply --reverse --check "%LASTPATCH%" >nul 2>&1
 if errorlevel 1 for %%P in ("%~dp0..\patches\*.patch") do call :apply "%%~fP"
 if defined PATCHFAIL exit /b 1
+rem RelWithDebInfo with full inlining (/Ob2 like Release; CMake's default /Ob1 kept the GS's per-pixel helpers as calls).
 cmake -S "%SRC%" -B "%SRC%\out\runtime" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
+  "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=/Zi /O2 /Ob2 /DNDEBUG" "-DCMAKE_C_FLAGS_RELWITHDEBINFO=/Zi /O2 /Ob2 /DNDEBUG" ^
   -DPS2X_BUILD_RECOMP=OFF -DPS2X_BUILD_ANALYZER=OFF -DPS2X_BUILD_TEST=OFF -DPS2X_BUILD_STUDIO=OFF ^
   -DPS2X_ENABLE_AGRESSIVE_LOGS=OFF -DPS2X_ENABLE_RUNTIME_LOGS=ON -DPS2X_ENABLE_IOP_RPC_TRACE=ON
 if errorlevel 1 exit /b 1

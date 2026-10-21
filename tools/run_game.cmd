@@ -7,5 +7,7 @@ set "ROOT=%~dp0.."
 set "EXE=%ROOT%\external\PS2Recomp\out\runtime\ps2xRuntime\ps2EntryRunner.exe"
 if not exist "%EXE%" (echo ps2EntryRunner.exe not built: run tools\build_runtime.cmd & exit /b 1)
 if not exist "%ROOT%\logs" mkdir "%ROOT%\logs"
+rem Draw on several threads (the runtime's GS is a software renderer); set PS2X_GS_THREADS=0 to draw on one.
+if not defined PS2X_GS_THREADS set "PS2X_GS_THREADS=auto"
 "%EXE%" "%ROOT%\game\disc\SCES_508.78" > "%ROOT%\logs\run.log" 2>&1
 echo exit code %errorlevel%, log in logs\run.log

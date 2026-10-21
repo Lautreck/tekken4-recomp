@@ -32,6 +32,8 @@ function Send-Key([IntPtr]$h, [int]$vkCode, [int]$scanCode, [bool]$extended, [in
 New-Item -ItemType Directory -Force $RunDir | Out-Null
 $exe = Join-Path $root "external\PS2Recomp\out\runtime\ps2xRuntime\ps2EntryRunner.exe"
 $elf = Join-Path $root "game\disc\SCES_508.78"
+# Draw on several threads like tools\run_game.cmd (set PS2X_GS_THREADS=0 beforehand to draw on one).
+if (-not $env:PS2X_GS_THREADS) { $env:PS2X_GS_THREADS = "auto" }
 $events = @($Shots | ForEach-Object { [pscustomobject]@{ t = [double]$_; kind = "shot"; key = "" } })
 foreach ($k in $Keys) { $t, $name = $k -split ":", 2; $events += [pscustomobject]@{ t = [double]$t; kind = "key"; key = $name } }
 $events = $events | Sort-Object t

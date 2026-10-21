@@ -10,6 +10,15 @@
 #include "Stubs/CD.h"
 #include <ps2_recompiled_functions.h>
 
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#define NOGDI  // raylib shares this unity build: no Rectangle,
+#define NOUSER // CloseWindow, ShowCursor from windows.h
+#include <windows.h>
+#include <dbghelp.h> // SYMBOL_INFO only: the functions are loaded at run time
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -196,6 +205,95 @@ namespace tekken4
         std::memcpy(rdram + kMovieReadResult, &done, 4);
     }
 
+#ifdef _WIN32
+    // Debug aid (TEKKEN4_PROFILE=<start s>:<seconds>): from <start> on, samples the game thread's instruction
+    // pointer about every millisecond for <seconds>, then logs the functions it was in most often (names from the
+    // PDB through dbghelp). The game thread is taken from the first per-frame sound call.
+    std::atomic<HANDLE> g_gameThread{nullptr};
+
+    void captureGameThread()
+    {
+        if (g_gameThread.load())
+            return;
+        HANDLE h = nullptr;
+        if (DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &h,
+                            THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, 0))
+            g_gameThread = h;
+    }
+
+    void startProfiler(const char *spec)
+    {
+        const double start = std::atof(spec);
+        const char *colon = std::strchr(spec, ':');
+        const double seconds = colon ? std::atof(colon + 1) : 10.0;
+        std::thread([start, seconds]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(start * 1000.0)));
+            HANDLE thread = g_gameThread.load();
+            if (!thread)
+                return;
+            std::unordered_map<DWORD64, uint32_t> samples;
+            uint32_t total = 0u;
+            const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<int>(seconds * 1000.0));
+            while (std::chrono::steady_clock::now() < end)
+            {
+                if (SuspendThread(thread) != static_cast<DWORD>(-1))
+                {
+                    CONTEXT c{};
+                    c.ContextFlags = CONTEXT_CONTROL;
+                    if (GetThreadContext(thread, &c))
+                    {
+                        ++samples[c.Rip];
+                        ++total;
+                    }
+                    ResumeThread(thread);
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            HMODULE dbghelp = LoadLibraryA("dbghelp.dll");
+            using SymInitializeFn = BOOL(WINAPI *)(HANDLE, PCSTR, BOOL);
+            using SymFromAddrFn = BOOL(WINAPI *)(HANDLE, DWORD64, PDWORD64, void *);
+            using SymSetOptionsFn = DWORD(WINAPI *)(DWORD);
+            auto symInitialize = dbghelp ? reinterpret_cast<SymInitializeFn>(GetProcAddress(dbghelp, "SymInitialize")) : nullptr;
+            auto symFromAddr = dbghelp ? reinterpret_cast<SymFromAddrFn>(GetProcAddress(dbghelp, "SymFromAddr")) : nullptr;
+            auto symSetOptions = dbghelp ? reinterpret_cast<SymSetOptionsFn>(GetProcAddress(dbghelp, "SymSetOptions")) : nullptr;
+            const HANDLE process = GetCurrentProcess();
+            const bool symbols = symInitialize && symFromAddr && (symSetOptions ? (symSetOptions(0x2 /*UNDNAME*/ | 0x4 /*DEFERRED*/), true) : true) &&
+                                 symInitialize(process, nullptr, TRUE);
+            std::unordered_map<std::string, uint32_t> byFunction;
+            for (const auto &[ip, count] : samples)
+            {
+                std::string name;
+                if (symbols)
+                {
+                    alignas(8) char buffer[sizeof(SYMBOL_INFO) + 512] = {};
+                    auto *info = reinterpret_cast<SYMBOL_INFO *>(buffer);
+                    info->SizeOfStruct = sizeof(SYMBOL_INFO);
+                    info->MaxNameLen = 511;
+                    DWORD64 displacement = 0;
+                    if (symFromAddr(process, ip, &displacement, info))
+                        name = info->Name;
+                }
+                if (name.empty())
+                {
+                    std::ostringstream o;
+                    o << "0x" << std::hex << ip;
+                    name = o.str();
+                }
+                byFunction[name] += count;
+            }
+            std::vector<std::pair<uint32_t, std::string>> sorted;
+            for (const auto &[name, count] : byFunction)
+                sorted.emplace_back(count, name);
+            std::sort(sorted.rbegin(), sorted.rend());
+            RUNTIME_LOG("[tekken4] profile: " << total << " samples of the game thread\n");
+            for (size_t i = 0; i < sorted.size() && i < 30u; ++i)
+                RUNTIME_LOG("[tekken4] profile " << std::fixed << std::setprecision(1)
+                                                 << 100.0 * sorted[i].first / std::max<uint32_t>(total, 1u) << "% "
+                                                 << sorted[i].second << "\n");
+        }).detach();
+    }
+#endif
+
     std::mutex g_mutex;
     std::set<uint32_t> g_soundClients;
     std::set<uint32_t> g_loggedCalls;
@@ -216,7 +314,7 @@ namespace tekken4
             if (g_gifLog.is_open())
             {
                 g_gifLog << "packet " << std::dec << size << " bytes\n" << std::hex << std::setfill('0');
-                for (uint32_t off = 0; off + 16u <= size && off < 0x800u; off += 16u)
+                for (uint32_t off = 0; off + 16u <= size; off += 16u)
                 {
                     uint64_t lo = 0, hi = 0;
                     std::memcpy(&lo, data + off, 8);
@@ -401,6 +499,10 @@ namespace tekken4
                                                        << " size 0x" << replySize << std::dec << "\n");
         }
         // The per-frame sound update doubles as a frame counter: log at 1, 10, 100, ... frames.
+#ifdef _WIN32
+        if (function == kSoundFrameCall)
+            captureGameThread();
+#endif
         if (function == kSoundFrameCall && ++g_frames == g_nextFrameLog)
         {
             const auto now = std::chrono::steady_clock::now();
@@ -784,6 +886,38 @@ namespace tekken4
             PS2Runtime *rt = &runtime;
             runtime.gifArbiter().setProcessPacketFn([rt](const uint8_t *data, uint32_t size)
                                                     { processGifPacketLogged(*rt, data, size); });
+        }
+#ifdef _WIN32
+        if (const char *profile = std::getenv("TEKKEN4_PROFILE"))
+            startProfiler(profile);
+#endif
+        if (const char *perf = std::getenv("TEKKEN4_PERF_LOG"))
+        {
+            // Debug aid for the frame rate: for <seconds>, logs each second the game's frames (sound call 0x100)
+            // and the host time spent drawing (GIF packets through the GS), which runs on the game's thread.
+            static std::atomic<uint64_t> gsNanoseconds{0};
+            PS2Runtime *rt = &runtime;
+            runtime.gifArbiter().setProcessPacketFn([rt](const uint8_t *data, uint32_t size)
+                                                    {
+                                                        const auto t0 = std::chrono::steady_clock::now();
+                                                        rt->gs().processGIFPacket(data, size);
+                                                        gsNanoseconds += static_cast<uint64_t>(
+                                                            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                                std::chrono::steady_clock::now() - t0).count());
+                                                    });
+            const int seconds = std::atoi(perf);
+            std::thread([seconds]() {
+                uint64_t lastFrames = 0u, lastGs = 0u;
+                for (int s = 0; s < seconds; ++s)
+                {
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                    const uint64_t frames = g_frames, gs = gsNanoseconds.load();
+                    RUNTIME_LOG("[tekken4] perf second " << s << ": " << frames - lastFrames << " frames, GS "
+                                                         << (gs - lastGs) / 1000000u << " ms\n");
+                    lastFrames = frames;
+                    lastGs = gs;
+                }
+            }).detach();
         }
         runtime.registerFunction(kSceSifBindRpc, sifBindRpc);
         runtime.registerFunction(kSceSifCallRpc, sifCallRpc);

@@ -2,8 +2,8 @@
 
 Replays the GS registers a sprite depends on (PRIM, RGBAQ, UV, XYZ2, TEX0, CLAMP, TEX1, XYOFFSET, FRAME) through
 PACKED, REGLIST and A+D data, and prints one line per sprite: screen rectangle (XYOFFSET removed), UVs, texture
-and its CLAMP / filtering. Packets are logged as quadwords "hi lo", the GIF tag first; only the first 0x800 bytes
-of a packet are in the log, so sprites in a longer packet's tail are missing.
+and its CLAMP / filtering. Packets are logged as quadwords "hi lo", the GIF tag first (whole packets since
+2026-10-21; older logs kept only the first 0x800 bytes of each packet, so long packets lose their tail).
 
 Usage: python -I tools/gif_sprites.py logs/<run>/gif_packets_frame<N>.txt [--min-y Y --max-y Y]
 """

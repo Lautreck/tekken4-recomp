@@ -21,6 +21,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   After the movie (Start skips it) the first-run difficulty screen works (see "Difficulty screen").
   Its dashed lines are fixed too (patch 08).
   **Milestone 6 reached:** Cross on MEDIUM opens the main menu (MODE SELECT: STORY BATTLE .. OPTIONS), as in PCSX2.
+  Frame rate fixed: 60 fps on every screen so far (patch 09, see "GS speed").
 - **Resume at: "Next steps" #1 (milestone 7: a fight).**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
@@ -453,6 +454,29 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
   probably reports pad 2 as connected. At 55 s PCSX2 has gone to the attract demo (VS screen); ours is still on
   the menu (its idle timer likely counts frames and we run at ~36 fps).
 
+## GS speed (session 3, 2026-10-21)
+- Measured with two new debug aids in the override: TEKKEN4_PERF_LOG=<s> (game frames and host time in GS
+  packet processing per second) and TEKKEN4_PROFILE=<start s>:<s> (samples the game thread's instruction pointer
+  every ms, names the hottest functions from the PDB via dbghelp; windows.h needs NOGDI/NOUSER next to raylib in
+  the unity build). The game thread spent 860-930 ms of every second drawing in the software GS: ~40 fps on the
+  first menus, 17 fps on the main menu.
+- Fixes, in order (first menu / main menu fps): C-runtime rounding in bilinear filtering (lround/floor are calls
+  without /arch:AVX, a fifth of the time) replaced by exact inline arithmetic 46/22; RelWithDebInfo with /Ob2
+  (tools/build_runtime.cmd; CMake's /Ob1 kept the per-pixel helpers as calls) 52/24; forced inlining of the
+  per-pixel helpers 55/26; bilinear skips texels with weight 0 (the screen copy samples on texel columns) 60/28;
+  WritePixel's per-primitive part computed once (PixelPipeline) 60/29; then **drawing threads**: 60/60.
+- **Drawing threads** (PS2X_GS_THREADS=<n>|auto, off by default in the runtime; tools/run_game.cmd and
+  run_capture.ps1 set auto = logical CPUs - 2): every primitive is queued for all workers, each draws the rows of
+  its own 16-row bands (no two threads share a byte in any format). Everything else that touches GS memory or
+  the CLUT (uploads, CLUT loads, TEXFLUSH, readbacks, presentation, reset) first waits until the queue is drawn,
+  and all texture page caches are invalidated there. A primitive that samples pages a queued one draws into, or
+  draws into pages a queued one samples, also waits (the bands run ahead of each other). Without the cache
+  invalidation and that check the main menu had black rectangles. New test: the same sequence (40 blended
+  bilinear sprites, a sprite sampling the frame just drawn, a full-screen fill) gives identical GS memory with 0
+  and 4 threads; 456/456.
+- All of it is patch 09 (not upstreamed yet: it builds on PR #377's DrawSprite). The movie plays at 30 fps (the
+  player shows a picture every second vsync), every other screen at 60.
+
 ## Publishing (from 2026-10-21)
 The user pre-authorized publishing every successful milestone on three channels:
 - **Project repo (public):** https://github.com/Lautreck/tekken4-recomp (`origin`, branch `master`). Commits use
@@ -482,13 +506,16 @@ The user pre-authorized publishing every successful milestone on three channels:
   A session-3 progress page for the user: https://claude.ai/artifact/Y2iCxSTrfwM5mY5rWZxWK2.
 
 ## Next steps
-1. Milestone 7, a fight: ARCADE (Down, Cross), character select, then the stage. Compare with PCSX2 at each step.
+1. Upstream patch 09 (GS speed + drawing threads) once PR #377 is in, as a follow-up PR.
+2. Milestone 7, a fight: ARCADE (Down, Cross), character select, then the stage. Compare with PCSX2 at each step.
    First stop found: after Arcade (keys ...,"36:Cross","40:Down","41.5:Cross"), PCSX2 shows CHOOSE YOUR FIGHTER
    (logs/pcsx2_arcade); ours loads the select screen's files (disc reads at sectors 1043812-1044716, one mode-6
    read of 29824 bytes to IOP 0x12b090 skipped) and then shows only black (logs/arcade1). Check first whether the
    main loop still runs (TEKKEN4_PRESENT_LOG / frame log), then what the select screen waits for or draws.
-   Also: pad 2 reported as connected (VS BATTLE enabled), attract demo timing. Reaching the main menu = milestone 6: publish its page (movie, display fixes).
-2. Frame pacing: 38-47 vs 50/60 fps. The loop busy-waits on `RCNT0_COUNT >= 0x724` and on vsync.
+   Also: pad 2 reported as connected (VS BATTLE enabled). At 60 fps the main menu's idle timeout comes ~44 s
+   into a run, and the attract loop (it reloads the files read before the intro movie) stops at the same place
+   as the select screen: game thread at PC 0x227eb8, RA 0x1feedc, no more frames (logs/mt1). One cause, two
+   symptoms: look at 0x227eb8 first.
 3. Sound for real (milestone 8): find how the game loads its IOP modules (sceSifRebootIop with
    IOPRP243.IMG, then module buffers probably from DATA.BIN), extract the sound IRX and run it on ps2xIOP's
    emulated IOP. Then the override's sound part goes away.

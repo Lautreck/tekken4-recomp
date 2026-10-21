@@ -584,6 +584,10 @@ Progress (2026-10-21, commits a31b778, fda9e02):
   (logs/stallfix_fight1): fps never drops to 0 (7-9 to 168 s), no [vu1-long] budget runs, fight at 00:11:85 timer 48,
   menus and VS screen fine. Generic upstream fix (stubs should not touch the DMA tag qwc) = Grok task upstream-qwc.
   NEW: in the fight the camera is far too close (fighters fill the screen; PCSX2 at the same time shows them full-body).
+  Fight profile after the fix (TEKKEN4_PROFILE=75:15, logs/fight_profile2, 14-15 fps): native VU1 <1%; the game thread
+  waits on the GS drawing threads 56% (NtWaitForAlertByThreadId) + 8% waking them, memcpy 8.6%, UploadImage/CLUT ~3%;
+  "GS 830 ms" per second. The CPU GS is now the limit (huge close-up triangles make it worse: fixing the camera
+  should help); next levers: the camera, then GS speed (SIMD rasterizer / GPU renderer).
 - **Root cause found one level up (2026-10-21, PCSX2 ring dump):** the "REF qwc=0 / REFE" that ended the list are UNPACK
   data, not tags. The game's own packet is wrong in our run: `CNT qwc=4` with `DIRECT 2` in its tag-hi (2 qwords of GIF
   data: TEXFLUSH) also counts the next two REF texture-upload tags (`REF qwc=0x26 addr=0x6c2220` FLUSHE;DIRECTHL,

@@ -11,7 +11,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   (see "First run"); 350 missing functions added (4 constructors + 346 vtable/callback targets) (see "Missing
   functions fix"); silent sound-driver override (see "Sound driver override"); MFIFO + D_ENABLE runtime
   patch (see "MFIFO + D_ENABLE patch"). Milestone 4 published (see "Publishing").
-- **Resume at: milestone 5, menu draws partly: missing glyphs, top-half placement, garbage squares** (see "Result: the menu draws").
+- **Resume at: milestone 5, menu fully drawn; left: top-half placement, garbage squares, PAL60 -> Namco logo** (see "Result: the whole display-mode menu renders").
 - **Session 3 goal: milestone 5.** The first screen (display-mode menu) draws its 10-strip box, but grey, without
   text, in the top half only. Start from "Next steps" #1.
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
@@ -325,6 +325,17 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
   display-mode menu appears: brown panel in its real colour, "Caution:" readable, but most glyphs missing,
   the panel in the top half (field not scaled to the full picture) and three garbled squares at the bottom
   left. Screenshot: docs/img/m5_first_menu_partial.png (our build's output).
+- **Fixed: PATH2 as one GIF stream (patch 02).** The game cuts its GIF stream into fixed CNT 0x152 / DIRECT
+  0x152 chunks regardless of packet boundaries (e.g. a glyph IMAGE upload of 15 qwords spans two chunks).
+  Upstream's VIF1 interpreter only tracked a pending IMAGE count and resumed it at the VIF level, eating the
+  next chunk's TTE VIFcodes (NOP; DIRECT) as image data: everything after was misaligned by 8 bytes and
+  became garbage GIF tags (stray points, psm 0x15). Now each DIRECT appends to `m_path2Stream` and only
+  complete GIF packets (any format) go to the GS; the tail waits for the next DIRECT (cleared on VIF1 reset).
+- **Result: the whole display-mode menu renders** (docs/img/m5_menu_text.png): panel, all text lines, arrow
+  on PAL50. Remaining for milestone 5: the picture is squashed into the top half (field mode not scaled to
+  the full PAL frame), three garbled squares at the bottom left, ~44 fps, then the Namco logo after PAL60.
+- Patches renamed so they apply in order: 01-ps2xRuntime-dmac-mfifo.patch (= PR #372), 02-ps2xRuntime-dma-
+  fixes.patch (toSPR chain, empty-chain completion, PATH2 stream). Checked on a clean upstream worktree.
 - Also in the dma-chain patch: a chain that ends without data (lone END/REFE/IRQ tag) now completes its
   channel (upstream left STR set and raised no interrupt). Correct per hardware, but didn't fix the hang.
 - Side findings: the menu text isn't in the ELF; the IOP module package is embedded LZ-compressed and

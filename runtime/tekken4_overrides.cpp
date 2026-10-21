@@ -212,6 +212,9 @@ namespace tekken4
         // EE RAM 0x300000-0x500000 (.rodata, .bss start, the game's buffers) for comparing with PCSX2's.
         std::ofstream ram("ram_0x300000_frame" + std::to_string(frame) + ".bin", std::ios::binary);
         ram.write(reinterpret_cast<const char *>(runtime.memory().getRDRAM() + 0x300000u), 0x200000);
+        // The MFIFO ring (0x100000, 512 KB) as it is at this point of the frame.
+        std::ofstream ring("ring_frame" + std::to_string(frame) + ".bin", std::ios::binary);
+        ring.write(reinterpret_cast<const char *>(runtime.memory().getRDRAM() + 0x100000u), 0x80000);
         RUNTIME_LOG("[tekken4] GS dump written for frame " << frame << "\n");
     }
 

@@ -1,0 +1,328 @@
+diff --git a/ps2xRuntime/include/runtime/ps2_memory.h b/ps2xRuntime/include/runtime/ps2_memory.h
+index 28939d9..66e7135 100644
+--- a/ps2xRuntime/include/runtime/ps2_memory.h
++++ b/ps2xRuntime/include/runtime/ps2_memory.h
+@@ -409,6 +409,7 @@ public:
+     bool m_path3Masked = false;
+     uint32_t m_vif1PendingPath2ImageQwc = 0u;
+     bool m_vif1PendingPath2DirectHl = false;
++    std::vector<uint8_t> m_path2Stream; // DIRECT payload bytes of a GIF packet not yet complete
+     std::vector<std::vector<uint8_t>> m_path3MaskedFifo;
+ 
+     struct PendingTransfer
+@@ -450,6 +451,7 @@ public:
+ 
+     std::array<EeTimer, 4> m_eeTimers{};
+     bool tryProcessScratchpadDma(uint32_t channelBase, uint32_t chcr);
++    bool processSprToChain(uint32_t chcr);
+     void completeDmacChannel(uint32_t channelBase, uint32_t cause);
+     void queueCompletedDmacCause(uint32_t cause);
+ 
+diff --git a/ps2xRuntime/src/lib/ps2_memory.cpp b/ps2xRuntime/src/lib/ps2_memory.cpp
+index 55a10c2..c2dd927 100644
+--- a/ps2xRuntime/src/lib/ps2_memory.cpp
++++ b/ps2xRuntime/src/lib/ps2_memory.cpp
+@@ -1240,6 +1240,7 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+                 std::memset(&vif1_regs, 0, sizeof(vif1_regs));
+                 m_vif1PendingPath2ImageQwc = 0u;
+                 m_vif1PendingPath2DirectHl = false;
++                m_path2Stream.clear();
+                 m_path3Masked = false;
+                 if (wasPath3Masked)
+                     flushMaskedPath3Packets();
+@@ -1419,6 +1420,7 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+                     const bool transferTagData = isVifChannel && (chcr & 0x40u) != 0u;
+ 
+                     int tagsProcessed = 0;
++                    bool chainEnded = false;
+                     uint32_t lastTagUpper = (chcr >> 16) & 0xFFFFu;
+ 
+                     while (tagsProcessed < kMaxChainTags)
+@@ -1534,7 +1536,10 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+                         if (irq && tieEnabled)
+                             endChain = true;
+                         if (endChain)
++                        {
++                            chainEnded = true;
+                             break;
++                        }
+                     }
+ 
+                     m_ioRegisters[channelBase + 0x30] = tagAddr;
+@@ -1564,10 +1569,14 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+                             m_pendingVif0Transfers.push_back(std::move(pt));
+                         }
+                     }
+-                    // else if (channelBase == 0x10009000u)
+-                    // {
+-
+-                    // }
++                    else if (chainEnded)
++                    {
++                        // A chain that ends without carrying any data (a lone END, REFE or IRQ tag) still
++                        // completes: STR clears and the channel raises D_STAT and its DMAC interrupt.
++                        const uint32_t cause = channelBase == 0x1000A000u ? 2u : (channelBase == 0x10009000u ? 1u : 0u);
++                        m_ioRegisters[channelBase + 0x20] = 0u;
++                        completeDmacChannel(channelBase, cause);
++                    }
+                 }
+                 else if (qwc > 0)
+                 {
+@@ -1608,6 +1617,8 @@ bool PS2Memory::tryProcessScratchpadDma(uint32_t channelBase, uint32_t chcr)
+         return false;
+ 
+     const uint32_t mode = (chcr >> 2u) & 0x3u;
++    if (mode == 1u && channelBase == kSprToChannel)
++        return processSprToChain(chcr);
+     if (mode != 0u)
+         return false;
+ 
+@@ -1697,6 +1708,125 @@ void PS2Memory::completeDmacChannel(uint32_t channelBase, uint32_t cause)
+     queueCompletedDmacCause(cause);
+ }
+ 
++bool PS2Memory::processSprToChain(uint32_t chcr)
++{
++    // toSPR (channel 9) in source-chain mode: DMAtags are read from main memory at TADR and their data is copied
++    // to scratchpad at SADR (wrapping inside the 16 KB). With CHCR.TTE the whole tag qword is copied first.
++    static constexpr uint32_t kChannel = 0x1000D400u;
++    const bool transferTag = (chcr & 0x40u) != 0u;
++    const bool tieEnabled = (chcr & 0x80u) != 0u;
++    uint32_t tadr = m_ioRegisters[kChannel + 0x30u] & 0x7FFFFFF0u;
++    uint32_t madr = m_ioRegisters[kChannel + 0x10u] & 0x7FFFFFF0u;
++    uint32_t sadr = m_ioRegisters[kChannel + 0x80u] & 0x3FF0u;
++    uint32_t asr0 = m_ioRegisters[kChannel + 0x40u];
++    uint32_t asr1 = m_ioRegisters[kChannel + 0x50u];
++    uint32_t asp = (chcr >> 4u) & 0x3u;
++    uint32_t lastTagUpper = chcr >> 16u;
++
++    auto toScratchpad = [&](uint32_t from, uint32_t qwCount)
++    {
++        uint32_t src = 0u;
++        try
++        {
++            src = translateAddress(from);
++        }
++        catch (const std::exception &)
++        {
++            return;
++        }
++        for (uint32_t i = 0u; i < qwCount && src + 16u <= PS2_RAM_SIZE; ++i, src += 16u)
++        {
++            std::memcpy(m_scratchpad + sadr, m_rdram + src, 16u);
++            sadr = (sadr + 16u) & (PS2_SCRATCHPAD_SIZE - 1u);
++        }
++    };
++
++    bool ended = false;
++    for (int tags = 0; tags < 4096 && !ended; ++tags)
++    {
++        uint32_t tagPhys = 0u;
++        try
++        {
++            tagPhys = translateAddress(tadr);
++        }
++        catch (const std::exception &)
++        {
++            break;
++        }
++        if (tagPhys + 16u > PS2_RAM_SIZE)
++            break;
++        const uint64_t tag = loadScalar<uint64_t>(m_rdram + tagPhys, 0, 16, "spr chain tag", tadr);
++        const uint32_t tagQwc = static_cast<uint32_t>(tag & 0xFFFFu);
++        const uint32_t id = static_cast<uint32_t>((tag >> 28) & 0x7u);
++        const bool irq = ((tag >> 31) & 0x1u) != 0u;
++        const uint32_t addr = static_cast<uint32_t>((tag >> 32) & 0x7FFFFFF0u);
++        lastTagUpper = static_cast<uint32_t>((tag >> 16) & 0xFFFFu);
++
++        if (transferTag)
++        {
++            std::memcpy(m_scratchpad + sadr, m_rdram + tagPhys, 16u);
++            sadr = (sadr + 16u) & (PS2_SCRATCHPAD_SIZE - 1u);
++        }
++
++        const uint32_t next = tadr + 16u;
++        switch (id)
++        {
++        case 0u: // REFE
++            madr = addr;
++            tadr = next;
++            ended = true;
++            break;
++        case 1u: // CNT
++            madr = next;
++            tadr = next + tagQwc * 16u;
++            break;
++        case 2u: // NEXT
++            madr = next;
++            tadr = addr;
++            break;
++        case 3u: // REF
++        case 4u: // REFS
++            madr = addr;
++            tadr = next;
++            break;
++        case 5u: // CALL
++            madr = next;
++            if (asp == 0u)
++                asr0 = next + tagQwc * 16u;
++            else
++                asr1 = next + tagQwc * 16u;
++            asp = std::min(asp + 1u, 2u);
++            tadr = addr;
++            break;
++        case 6u: // RET
++            madr = next;
++            if (asp == 0u)
++                ended = true;
++            else
++                tadr = (--asp == 1u) ? asr1 : asr0;
++            break;
++        case 7u: // END
++            madr = next;
++            ended = true;
++            break;
++        }
++        toScratchpad(madr, tagQwc);
++        madr += tagQwc * 16u;
++        if (irq && tieEnabled)
++            ended = true;
++    }
++
++    m_ioRegisters[kChannel + 0x30u] = tadr;
++    m_ioRegisters[kChannel + 0x10u] = madr;
++    m_ioRegisters[kChannel + 0x80u] = sadr;
++    m_ioRegisters[kChannel + 0x40u] = asr0;
++    m_ioRegisters[kChannel + 0x50u] = asr1;
++    m_ioRegisters[kChannel + 0x20u] = 0u;
++    m_ioRegisters[kChannel] = (chcr & 0x0000FFCFu) | ((asp & 0x3u) << 4u) | (lastTagUpper << 16u);
++    completeDmacChannel(kChannel, 9u);
++    return true;
++}
++
+ uint32_t PS2Memory::mfifoDrainChannel()
+ {
+     const auto dctrlIt = m_ioRegisters.find(0x1000E000u);
+diff --git a/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp b/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
+index b02c7ca..956b1fe 100644
+--- a/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
++++ b/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
+@@ -30,17 +30,14 @@ namespace
+ {
+     constexpr uint8_t kGifFmtImage = 2u;
+ 
+-    uint32_t pendingGifImageQwc(const uint8_t *data, uint32_t sizeBytes)
++    // Length of the leading run of complete GIF packets (tag + whole payload) in a PATH2 stream buffer.
++    uint32_t completeGifPacketsPrefix(const uint8_t *data, uint32_t sizeBytes)
+     {
+-        if (!data || sizeBytes < 16u)
+-            return 0u;
+-
+         uint32_t offset = 0u;
+         while (offset + 16u <= sizeBytes)
+         {
+             uint64_t tagLo = 0u;
+             std::memcpy(&tagLo, data + offset, sizeof(tagLo));
+-            offset += 16u;
+ 
+             const uint32_t nloop = static_cast<uint32_t>(tagLo & 0x7FFFu);
+             const uint8_t flg = static_cast<uint8_t>((tagLo >> 58) & 0x3u);
+@@ -50,34 +47,17 @@ namespace
+ 
+             uint64_t payloadBytes = 0u;
+             if (flg == 0u) // PACKED
+-            {
+                 payloadBytes = static_cast<uint64_t>(nloop) * nreg * 16ull;
+-            }
+             else if (flg == 1u) // REGLIST, padded to a quadword
+-            {
+-                payloadBytes = static_cast<uint64_t>(nloop) * nreg * 8ull;
+-                payloadBytes = (payloadBytes + 15ull) & ~15ull;
+-            }
+-            else if (flg == kGifFmtImage)
+-            {
++                payloadBytes = ((static_cast<uint64_t>(nloop) * nreg * 8ull) + 15ull) & ~15ull;
++            else // IMAGE (and the disabled format, which behaves like it)
+                 payloadBytes = static_cast<uint64_t>(nloop) * 16ull;
+-                const uint64_t availableBytes = sizeBytes - offset;
+-                if (payloadBytes > availableBytes)
+-                {
+-                    return static_cast<uint32_t>((payloadBytes - availableBytes) / 16ull);
+-                }
+-            }
+-            else
+-            {
+-                return 0u;
+-            }
+ 
+-            if (payloadBytes > static_cast<uint64_t>(sizeBytes - offset))
+-                return 0u;
+-            offset += static_cast<uint32_t>(payloadBytes);
++            if (16ull + payloadBytes > static_cast<uint64_t>(sizeBytes - offset))
++                break; // the rest of this packet comes with the next DIRECT
++            offset += 16u + static_cast<uint32_t>(payloadBytes);
+         }
+-
+-        return 0u;
++        return offset;
+     }
+ }
+ 
+@@ -304,33 +284,6 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
+ 
+     while (pos + 4 <= sizeBytes)
+     {
+-        if (m_vif1PendingPath2ImageQwc != 0u)
+-        {
+-            const uint32_t availableQw = (sizeBytes - pos) / 16u;
+-            if (availableQw == 0u)
+-            {
+-                break;
+-            }
+-
+-            const uint32_t chunkQw = std::min<uint32_t>(m_vif1PendingPath2ImageQwc, availableQw);
+-            std::vector<uint8_t> imagePacket(16u + static_cast<size_t>(chunkQw) * 16u, 0u);
+-            const uint64_t imageTag =
+-                static_cast<uint64_t>(chunkQw & 0x7FFFu) |
+-                ((m_vif1PendingPath2ImageQwc == chunkQw) ? (1ull << 15) : 0ull) |
+-                (static_cast<uint64_t>(kGifFmtImage) << 58);
+-            std::memcpy(imagePacket.data(), &imageTag, sizeof(imageTag));
+-            std::memcpy(imagePacket.data() + 16u, data + pos, static_cast<size_t>(chunkQw) * 16u);
+-            submitGifPacket(GifPathId::Path2, imagePacket.data(), static_cast<uint32_t>(imagePacket.size()), true, m_vif1PendingPath2DirectHl);
+-
+-            pos += chunkQw * 16u;
+-            m_vif1PendingPath2ImageQwc -= chunkQw;
+-            if (m_vif1PendingPath2ImageQwc == 0u)
+-            {
+-                m_vif1PendingPath2DirectHl = false;
+-            }
+-            continue;
+-        }
+-
+         uint32_t cmd;
+         memcpy(&cmd, data + pos, 4);
+         pos += 4;
+@@ -497,14 +450,17 @@ void PS2Memory::processVIF1Data(const uint8_t *data, uint32_t sizeBytes)
+ 
+             if (qwCount > 0)
+             {
++                // PATH2 is one GIF stream: a GIF packet (any format, not only IMAGE) may start in one DIRECT
++                // and end in the next, and VIFcodes sit between the two parts. Collect DIRECT payloads and hand
++                // the GS only complete packets; an incomplete tail waits for the next DIRECT.
+                 const bool directHl = (opcode == VIF_DIRECTHL);
+-                submitGifPacket(GifPathId::Path2, data + pos, qwCount * 16, true, directHl);
+-
+-                const uint32_t pendingImageQw = pendingGifImageQwc(data + pos, qwCount * 16u);
+-                if (pendingImageQw != 0u)
++                m_path2Stream.insert(m_path2Stream.end(), data + pos, data + pos + static_cast<size_t>(qwCount) * 16u);
++                const uint32_t complete = completeGifPacketsPrefix(m_path2Stream.data(),
++                                                                   static_cast<uint32_t>(m_path2Stream.size()));
++                if (complete != 0u)
+                 {
+-                    m_vif1PendingPath2ImageQwc = pendingImageQw;
+-                    m_vif1PendingPath2DirectHl = directHl;
++                    submitGifPacket(GifPathId::Path2, m_path2Stream.data(), complete, true, directHl);
++                    m_path2Stream.erase(m_path2Stream.begin(), m_path2Stream.begin() + complete);
+                 }
+             }
+ 

@@ -1,6 +1,8 @@
 # From the God of War native port (https://github.com/Waffle565/God-Of-War-Native-Port, tools/vu1/vu1n_gen.py on
-# main at b76921c), used unchanged. That branch has no LICENSE file (its runtime branch is GPL-3.0): settle the
-# licence before publishing. The micro memories it reads and the C++ it writes are game code: never commit them.
+# main at b76921c). That branch has no LICENSE file (its runtime branch is GPL-3.0): settle the licence before
+# publishing. The micro memories it reads and the C++ it writes are game code: never commit them.
+# Tekken 4 change: OPMULA / OPMSUB with dest xyz are generated natively (cross products whose MAC flags the game tests
+# for backface culling); as interpreter callouts their flags were missing from the block's flag selection.
 """Native VU1 block generator.
 
 usage: python -I tools/vu1/vu1n_gen.py <out dir> <micro-memory dir or .bin files...> [--heads heads.txt] [--parts N]
@@ -125,6 +127,11 @@ def classify(u):
     return ('other', 'v', False, 0)
 
 
+def is_native_opm(kind, dest):
+    """OPMULA / OPMSUB generated natively (dest xyz, the only form games use); others stay interpreter callouts."""
+    return kind in ('opmsub', 'opmula') and dest == 0xE
+
+
 def upper_info(u):
     """(writes_vf set, reads_vf set, writes_mac, reads_q)"""
     kind, src, toacc, bc = classify(u)
@@ -148,7 +155,7 @@ def upper_info(u):
         r.update((fs, ft))
         if not toacc:
             w.add(fd)
-    writes_mac = kind in ('add', 'sub', 'madd', 'msub', 'mul') and dest != 0
+    writes_mac = (kind in ('add', 'sub', 'madd', 'msub', 'mul') or is_native_opm(kind, dest)) and dest != 0
     reads_q = src == 'q'
     return {x for x in w if x}, r, writes_mac, reads_q
 
@@ -171,12 +178,19 @@ def emit_upper(u, pc, idx, mac_var, clip_var, prev_clip, clean=frozenset()):
         return [f"vu1n::ftoi<{src}, {m}>(s, {fs}, {ft});"] if ft else L
     if kind == 'abs':
         return [f"vu1n::absOp<{m}>(s, {fs}, {ft});"] if ft else L
-    if kind in ('opmsub', 'opmula', 'other'):
+    if kind in ('opmsub', 'opmula', 'other') and not is_native_opm(kind, dest):
         return [f"VU1NativeAccess::callUpper(n, {pc}u, 0x{u:08x}u);"]
     def opnd(r):
         return f"vu1n::ld(s, {r})" if r == 0 or r in clean else f"vu1n::ldn(s, {r})"
+    pre = []
     a = opnd(fs)
-    if src == 'bc':
+    if kind in ('opmsub', 'opmula'):
+        # cross product terms like the exact engine: x = fs.y*ft.z, y = fs.z*ft.x, z = fs.x*ft.y (w masked by dest)
+        pre = [f"const __m128 os{idx} = {opnd(fs)}, ot{idx} = {opnd(ft)};"]
+        a = f"_mm_shuffle_ps(os{idx}, os{idx}, _MM_SHUFFLE(3, 0, 2, 1))"
+        b = f"_mm_shuffle_ps(ot{idx}, ot{idx}, _MM_SHUFFLE(3, 1, 0, 2))"
+        kind = 'mul' if kind == 'opmula' else 'msub'
+    elif src == 'bc':
         b = f"vu1n::bc<{bc}>({opnd(ft)})"
     elif src == 'q':
         b = "_mm_set1_ps(s.q)"
@@ -200,7 +214,7 @@ def emit_upper(u, pc, idx, mac_var, clip_var, prev_clip, clean=frozenset()):
     else:
         r = f"_mm_min_ps({a}, {b})"
     target = "s.acc" if toacc else f"s.vf[{fd}]"
-    out = [f"__m128 r{idx} = {r};"]
+    out = pre + [f"__m128 r{idx} = {r};"]
     if kind in ('add', 'sub', 'mul', 'madd', 'msub') and mac_var:
         out.append(f"const uint32_t {mac_var} = vu1n::macVal<{m}>(r{idx});")
         out.append(f"const __m128 q{idx} = r{idx};  // unclamped: flags computed later if it outlives the block")

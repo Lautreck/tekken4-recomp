@@ -1197,7 +1197,7 @@ index 45cb9d2..58cca01 100644
      // then applies the COP0 reset values, which a memset here would discard.
      m_cpuContext = R5900Context{};
 diff --git a/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp b/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
-index bd75bba..44641af 100644
+index bd75bba..0541bd9 100644
 --- a/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
 +++ b/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
 @@ -1,10 +1,15 @@
@@ -2248,7 +2248,7 @@ index bd75bba..44641af 100644
      return m_decodedCodeCache[pairIndex];
  }
  
-@@ -1629,200 +1911,313 @@ void VU1Interpreter::run(uint8_t *vuCode, uint32_t codeSize,
+@@ -1629,200 +1911,316 @@ void VU1Interpreter::run(uint8_t *vuCode, uint32_t codeSize,
      m_activeGs = &gs;
      m_activeMemory = memory;
  
@@ -2601,9 +2601,12 @@ index bd75bba..44641af 100644
 -            m_state.stoppedByT = tHalt;
 -            programEnded = true;
 +            ++bad;
-+            if (reports++ < 40u || (why.find("0000ffff") != std::string::npos && bisected < 6u))
++            // GOW_VU1N_BISECT=1: bisect every mismatch (Tekken 4's ADC words are 0x8000), not only the 0xFFFF ADC words
++            static const bool bisectAll = std::getenv("GOW_VU1N_BISECT") != nullptr;
++            const bool bisectThis = bisectAll || why.find("0000ffff") != std::string::npos;
++            if (reports++ < 40u || (bisectThis && bisected < 6u))
 +                std::fprintf(stderr, "[vu1n-verify] run %u (bad %u) startPc=%x MISMATCH:%s\n", checked, bad, startPc, why.c_str());
-+            if (why.find("0000ffff") != std::string::npos && bisected++ < 6u) // ADC words (0xFFFF) set on one side only
++            if (bisectThis && bisected++ < 6u) // ADC words (0xFFFF) set on one side only
 +            {
 +                // bisect: smallest number of native blocks (rest exact) whose result already differs from the pure exact run
 +                const auto differs = [&](unsigned limit)
@@ -2725,7 +2728,7 @@ index bd75bba..44641af 100644
  
      if (programEnded)
      {
-@@ -1832,7 +2227,204 @@ void VU1Interpreter::run(uint8_t *vuCode, uint32_t codeSize,
+@@ -1832,7 +2230,204 @@ void VU1Interpreter::run(uint8_t *vuCode, uint32_t codeSize,
          m_pendingHaltD = false;
          m_pendingHaltT = false;
      }
@@ -3122,10 +3125,10 @@ index 94be789..c160563 100644
                  queueP(vuEexp(normalizeOperand(m_state.vf[vfS][component])), 44u);
 diff --git a/ps2xRuntime/src/lib/vu/ps2_vu1_native.inl b/ps2xRuntime/src/lib/vu/ps2_vu1_native.inl
 new file mode 100644
-index 0000000..eabffa2
+index 0000000..df33c3f
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/vu/ps2_vu1_native.inl
-@@ -0,0 +1,1049 @@
+@@ -0,0 +1,1064 @@
 +// GOW-Port: native VU1 backend runtime (included at the end of ps2_vu1_core.cpp). See include/runtime/ps2_vu1_native.h.
 +#include "runtime/ps2_vu1_native.h"
 +
@@ -3241,6 +3244,18 @@ index 0000000..eabffa2
 +    }
 +}
 +
++// vf0 = (0, 0, 0, 1) and vi0 = 0 are hardwired: the exact engine writes them like other registers and restores them after
++// every pair (stepPair), so do the same after its instructions or pipelines run inside native code (Tekken 4 targets vf0
++// with flag-only operations).
++static inline void vu1nRestoreZeroRegisters(VU1State &s)
++{
++    s.vf[0][0] = 0.0f;
++    s.vf[0][1] = 0.0f;
++    s.vf[0][2] = 0.0f;
++    s.vf[0][3] = 1.0f;
++    s.vi[0] = 0;
++}
++
 +void VU1NativeAccess::callLower(VU1NativeCtx &n, uint32_t pc, uint32_t lower, uint32_t upper)
 +{
 +    VU1Interpreter &vu = *n.vu;
@@ -3249,6 +3264,7 @@ index 0000000..eabffa2
 +    vu.execLower(lower, c.vuData, c.dataSize, *c.gs, c.memory, upper);
 +    VU1NativeAccess::commitValuesKeepTiming(vu);
 +    VU1NativeAccess::importFlags(vu); // the callout's flag writes join the native blocks' ones
++    vu1nRestoreZeroRegisters(vu.m_state);
 +}
 +
 +void VU1NativeAccess::callUpper(VU1NativeCtx &n, uint32_t pc, uint32_t upper)
@@ -3258,6 +3274,7 @@ index 0000000..eabffa2
 +    vu.execUpper(upper);
 +    VU1NativeAccess::commitValuesKeepTiming(vu);
 +    VU1NativeAccess::importFlags(vu); // the callout's flag writes join the native blocks' ones
++    vu1nRestoreZeroRegisters(vu.m_state);
 +}
 +
 +void VU1NativeAccess::xgkick(VU1NativeCtx &n, uint32_t qwordAddress)
@@ -3929,6 +3946,7 @@ index 0000000..eabffa2
 +            commitReadyFlags();
 +            VU1NativeAccess::commitValuesKeepTiming(*this);
 +            VU1NativeAccess::importFlags(*this);
++            vu1nRestoreZeroRegisters(m_state);
 +            ns.histCount = 0u; // the exact engine's readiness arrays hold the state in flight
 +            if (m_cycle != ns.exitCycle) // the exact engine ran since the last native exit
 +            {

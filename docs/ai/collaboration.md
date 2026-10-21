@@ -57,3 +57,8 @@ Goal (user): one seamless team, each keeps its specialisation.
 ## RECORDS
 - Only Claude writes docs/status.md, memory and commits; Grok never commits/pushes. Upstream PR text stays as in
   status "Publishing". Every Grok result json keeps turns / cost_usd / seconds (cost claims must be checkable).
+
+## WHEN CLAUDE IS OUT OF USAGE
+- Claude commits+pushes everything first (restore point), writes docs/ai/handoff.md (steps: ### STEP name | ask|work | owned files, then the prompt blocks), and starts `powershell -File tools\grok_lead.ps1`.
+- The driver runs the steps in order through grok_task.ps1 and stops at the first failure (unparsed JSON, contra[] non-empty, work step without owned-file change); journal logs\grok\lead_journal.json.
+- Grok never commits; on return Claude reads the journal, reviews each diff, runs the tests, commits what holds and restores the rest.

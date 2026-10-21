@@ -13,15 +13,15 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   patch (see "MFIFO + D_ENABLE patch"). Milestone 4 published (see "Publishing").
 - Done in session 3: milestone 5 (menu with all text, PAL60 picked as controller 1, Namco logo); the DMA/VIF1
   fixes upstreamed as PR #373 (PATH2 continuation redone to keep upstream's tests passing), pk stub issue #374,
-  milestone 5 page (see "Publishing").
-- **Resume at: "Next steps" #1, field-mode display scaling (picture in the top half, GS memory below), then what
-  follows the logo vs PCSX2.**
+  milestone 5 page (see "Publishing"). Display fixed: interlaced FRAME mode now shows the half-height buffer
+  line-doubled, full screen like PCSX2 (patch 03 = PR #375, see "Display line repeat").
+- **Resume at: "Next steps" #1, the white screen ~19 s after the logo (compare with PCSX2).**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
 - Look at it: `powershell -File tools\run_capture.ps1 -Shots 8,25` (our build: hides the debug panel, screenshots +
   stdout in `logs\run_<time>\`), `powershell -File tools\pcsx2_capture.ps1 -Shots 15` (same in the user's PCSX2,
-  the ground truth). Runtime tests: `tools\build_tests.cmd` (PS2Recomp's ps2x_tests with both patches, 453/453).
+  the ground truth). Runtime tests: `tools\build_tests.cmd` (PS2Recomp's ps2x_tests with all patches, 454/454).
 - Not in git (rebuild/re-extract if lost): `external/` (clones + Ghidra + PCSX2 + MCP venv, see Pinned
   dependencies), `game/disc/` (7-Zip from the ISO), `generated/` (rerun `ps2_recomp config/analyzer_seed.toml`).
 
@@ -359,6 +359,21 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
   real sound driver ships inside the ELF. `tools/build_runtime.cmd` exit codes now propagate (an error inside a
   bracketed block used to be reported as success) and `.cmd` files are kept CRLF.
 
+## Display line repeat (session 3, 2026-10-21)
+- Display registers on the menu: PMODE 0x66 (CRT2 only), SMODE2 3 (INT=1, FFMD=1), DISPFB2 FBP 0xd2 FBW 10 PSMCT16,
+  DISPLAY2 DX 636 DY 50 MAGH 3 MAGV 0 DW 2559 DH 511. The game draws 640x256 per field.
+- PCSX2 shows the menu box twice as tall as we did, in the middle of the screen: in interlaced FRAME mode
+  (FFMD=1) each field reads every buffer line while DH counts both fields' lines, so the display shows
+  (DH+1)/2 = 256 buffer lines, each twice. Upstream read DH+1 = 512 lines in every mode (picture in the top half,
+  other VRAM below, which was the "three garbled squares"); it only special-cased FFMD=0 (bob of one parity).
+- **Fixed (patch 03 = PR #375):** `gs_cpu_backend.cpp` reads ceil(height / repeat) lines, repeat = (MAGV+1),
+  x2 in interlaced FRAME mode, and repeats them to DH+1 (`decodeDisplayLineRepeat`, `repeatPresentationLines`),
+  for both circuits. New test in ps2_gs_tests.cpp. Menu, PAL60 confirmation and logo now sit where PCSX2 puts
+  them (docs/img/disp_menu_full_height.png, disp_pal60_confirm.png, disp_namco_logo.png). The PCSX2 shots in
+  logs/pcsx2_pal60e are in German (portable PCSX2's language), so its menu box is wider: the text is longer.
+- After the logo (logs/after_logo1, PAL60 + Yes): black from ~24 s, then a near-white screen (mean 244/255) from
+  ~36 s to at least 56 s.
+
 ## Publishing (from 2026-10-21)
 The user pre-authorized publishing every successful milestone on three channels:
 - **Project repo (public):** https://github.com/Lautreck/tekken4-recomp (`origin`, branch `master`). Commits use
@@ -374,26 +389,23 @@ The user pre-authorized publishing every successful milestone on three channels:
   8e97bf7, built and tested in the worktree `external/ps2recomp-pr2`, 450/450; its `build_pr_tests.cmd` is local
   only, never commit it). Issue #374 https://github.com/ran-j/PS2Recomp/issues/374 = the pk stubs' live QWC
   doubling the count when a game's own close runs (our `closeDmaTag` override works around it).
+- PR #375 https://github.com/ran-j/PS2Recomp/pull/375 = patch 03, display line repeat (branch `display-line-repeat`,
+  commit d030383, worktree `external/ps2recomp-pr3`, 446/446).
 - **Milestone pages** (private until the user shares them from the page's Share menu): milestone 4 at
   https://claude.ai/artifact/BTDUfBQqwaDsn83wdRh2gf (our runtime screenshot next to PCSX2's), milestone 5 at
   https://claude.ai/artifact/CoN3nkpepFjyn5LSbPEQ7j (menu, PAL60 confirmation, Namco logo; four fixes).
 
 ## Next steps
-1. Field-mode display (milestone 6 groundwork): SMODE2 = 3 (INT=1, FFMD=1), the game draws a half-height
-   buffer but the runtime presents 512 buffer lines, so the picture fills the top half and other GS memory
-   shows below. It should read (DH+1)/2 lines and double them. Code: `gs_cpu_backend.cpp`
-   `PresentFromLocalMemory`, `decodeDisplaySize`, `applyFieldPresentation` (only `interlaced && !frameMode`
-   is handled). Compare with PCSX2 (PAL60). This is display code, so it is likely an upstream PR, not an override.
-2. The three garbled squares at the bottom left of the menu: probably that same VRAM below the picture; recheck
-   after #1.
-3. After the logo: a white screen at ~34 s. Compare with PCSX2 (pick PAL60 there too).
-4. Frame pacing: 38-47 vs 50/60 fps. The loop busy-waits on `RCNT0_COUNT >= 0x724` and on vsync.
-5. Sound for real (milestone 8): find how the game loads its IOP modules (sceSifRebootIop with
+1. After the logo: black from ~24 s, then a near-white screen from ~36 s on (logs/after_logo1). Run PCSX2 the
+   same way (PAL60, Yes) with shots at 24-60 s and see what it shows (intro movie? title screen?). If it is a
+   movie, look at the IPU/MPEG path (the ELF links libmpeg/libipu).
+2. Frame pacing: 38-47 vs 50/60 fps. The loop busy-waits on `RCNT0_COUNT >= 0x724` and on vsync.
+3. Sound for real (milestone 8): find how the game loads its IOP modules (sceSifRebootIop with
    IOPRP243.IMG, then module buffers probably from DATA.BIN), extract the sound IRX and run it on ps2xIOP's
    emulated IOP. Then the override's sound part goes away.
-6. Watch PRs #372/#373 and issue #374: when merged, move `external/PS2Recomp` back to upstream main and drop the
+4. Watch PRs #372/#373/#375 and issue #374: when merged, move `external/PS2Recomp` back to upstream main and drop the
    patch files.
-7. Re-export from Ghidra (3 late SDK renames) whenever Ghidra is next used for an export; rerun post-process.
-8. Later: export Ghidra's switch tables into `[jump_tables]` to cut the unresolved JR sites.
-9. Watch: upstream keeps its RPC server pool at guest 0x01F10000, above the game's stack top (sp starts
+5. Re-export from Ghidra (3 late SDK renames) whenever Ghidra is next used for an export; rerun post-process.
+6. Later: export Ghidra's switch tables into `[jump_tables]` to cut the unresolved JR sites.
+7. Watch: upstream keeps its RPC server pool at guest 0x01F10000, above the game's stack top (sp starts
    ~0x1f00000). If a heap ever lives there, see the GoW `GuestReservedLayout` lesson.

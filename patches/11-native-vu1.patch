@@ -1197,7 +1197,7 @@ index 45cb9d2..58cca01 100644
      // then applies the COP0 reset values, which a memset here would discard.
      m_cpuContext = R5900Context{};
 diff --git a/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp b/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
-index bd75bba..0541bd9 100644
+index bd75bba..16aa728 100644
 --- a/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
 +++ b/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
 @@ -1,10 +1,15 @@
@@ -2248,7 +2248,7 @@ index bd75bba..0541bd9 100644
      return m_decodedCodeCache[pairIndex];
  }
  
-@@ -1629,200 +1911,316 @@ void VU1Interpreter::run(uint8_t *vuCode, uint32_t codeSize,
+@@ -1629,200 +1911,327 @@ void VU1Interpreter::run(uint8_t *vuCode, uint32_t codeSize,
      m_activeGs = &gs;
      m_activeMemory = memory;
  
@@ -2395,7 +2395,11 @@ index bd75bba..0541bd9 100644
 +        std::memcpy(vuData, dataSave.data(), dataSize);
 +        m_verifySilent = silentBefore;
 +        const auto close = [](uint32_t a, uint32_t b)
-+        {
+         {
+-            execUpper(decoded.upper);
+-            float immediate = 0.0f;
+-            std::memcpy(&immediate, &decoded.lower, sizeof(immediate));
+-            m_state.i = normalizeOperand(immediate);
 +            if (a == b)
 +                return true;
 +            float fa, fb;
@@ -2414,11 +2418,7 @@ index bd75bba..0541bd9 100644
 +        if (endedA != endedB)
 +            why += " ended";
 +        if (stateA.pc != stateB.pc)
-         {
--            execUpper(decoded.upper);
--            float immediate = 0.0f;
--            std::memcpy(&immediate, &decoded.lower, sizeof(immediate));
--            m_state.i = normalizeOperand(immediate);
++        {
 +            std::snprintf(buf, sizeof(buf), " pc %x/%x", stateA.pc, stateB.pc);
 +            why += buf;
          }
@@ -2592,14 +2592,6 @@ index bd75bba..0541bd9 100644
 -            m_state.stoppedByD = m_pendingHaltD;
 -            m_state.stoppedByT = m_pendingHaltT;
 -            programEnded = true;
--        }
--        else if (m_state.ebit)
--            programEnded = true;
--        else if (haltBit && !haltBranch)
--        {
--            m_state.stoppedByD = dHalt;
--            m_state.stoppedByT = tHalt;
--            programEnded = true;
 +            ++bad;
 +            // GOW_VU1N_BISECT=1: bisect every mismatch (Tekken 4's ADC words are 0x8000), not only the 0xFFFF ADC words
 +            static const bool bisectAll = std::getenv("GOW_VU1N_BISECT") != nullptr;
@@ -2680,14 +2672,31 @@ index bd75bba..0541bd9 100644
 +                m_verifySilent = silentBefore;
 +            }
          }
--        else if (decoded.eBit)
--            m_state.ebit = true;
--        else if (haltBranch)
+-        else if (m_state.ebit)
+-            programEnded = true;
+-        else if (haltBit && !haltBranch)
 +        else if (checked % 2000u == 0u)
 +            std::fprintf(stderr, "[vu1n-verify] %u runs checked, %u mismatches\n", checked, bad);
 +    }
++    // GOW_VU1N_CHECKLONG=1: debug, a native run that stops on its cycle budget is run again by the exact engine from the
++    // same entry state, to tell a native bug (the exact engine ends) from bad input (it runs to the budget too)
++    static const bool checkLong = std::getenv("GOW_VU1N_CHECKLONG") != nullptr;
++    std::unique_ptr<VU1Interpreter> longEntry;
++    std::vector<uint8_t> longEntryData;
++    const StepContext longEntryContext = context;
 +    if (m_unit == Unit::VU1 && m_native && m_native->enabled && vuData && codeSize == PS2_VU1_CODE_SIZE)
 +    {
++        if (checkLong)
+         {
+-            m_state.stoppedByD = dHalt;
+-            m_state.stoppedByT = tHalt;
+-            programEnded = true;
++            longEntry = std::make_unique<VU1Interpreter>(*this);
++            longEntryData.assign(vuData, vuData + dataSize);
+         }
+-        else if (decoded.eBit)
+-            m_state.ebit = true;
+-        else if (haltBranch)
 +        if (!runNativeLoop(context))
 +            runExact(context);
 +    }
@@ -2728,11 +2737,50 @@ index bd75bba..0541bd9 100644
  
      if (programEnded)
      {
-@@ -1832,7 +2230,204 @@ void VU1Interpreter::run(uint8_t *vuCode, uint32_t codeSize,
+@@ -1832,7 +2241,243 @@ void VU1Interpreter::run(uint8_t *vuCode, uint32_t codeSize,
          m_pendingHaltD = false;
          m_pendingHaltT = false;
      }
 +    m_lastRunHitBudget = !programEnded && !m_stopRequested && m_cycle >= context.budgetEnd; // GOW-Port
++    // GOW_VU1_LONGRUNS=<cycles>: debug, VU1 runs longer than that: start / stop pc, cycles, E bit or budget
++    static const uint64_t longRuns = std::getenv("GOW_VU1_LONGRUNS") ? std::strtoull(std::getenv("GOW_VU1_LONGRUNS"), nullptr, 10) : 0u;
++    if (longRuns && m_unit == Unit::VU1 && m_cycle - (context.budgetEnd - maxCycles) > longRuns)
++    {
++        static unsigned shown = 0;
++        if (shown++ < 300u)
++            std::fprintf(stderr, "[vu1-long] startPc=%x stopPc=%x cycles=%llu %s\n", runStartPc, m_state.pc,
++                         static_cast<unsigned long long>(m_cycle - (context.budgetEnd - maxCycles)),
++                         programEnded ? "ended" : (m_lastRunHitBudget ? "budget" : "stopped"));
++    }
++    if (longEntry && m_lastRunHitBudget)
++    {
++        static unsigned checked = 0;
++        if (checked++ < 40u)
++        {
++            const VU1Interpreter after(*this);
++            const std::vector<uint8_t> dataAfter(vuData, vuData + dataSize);
++            const bool silentBefore = m_verifySilent;
++            *this = *longEntry;
++            std::memcpy(vuData, longEntryData.data(), dataSize);
++            m_native->enabled = false;
++            m_verifySilent = true;
++            StepContext exact = longEntryContext;
++            const uint64_t cycle0 = m_cycle;
++            while (stepInterpreted(exact))
++            {
++            }
++            std::fprintf(stderr, "[vu1n-checklong] startPc=%x native: budget at pc %x; exact: %s after %llu cycles at pc %x; entry vi:",
++                         runStartPc, after.m_state.pc, exact.programEnded ? "ended" : "budget",
++                         static_cast<unsigned long long>(m_cycle - cycle0), m_state.pc);
++            for (int r = 1; r < 16; ++r)
++                std::fprintf(stderr, " %x", static_cast<unsigned>(longEntry->m_state.vi[r] & 0xFFFFu));
++            std::fprintf(stderr, " top=%x itop=%x\n", longEntry->m_state.top, longEntry->m_state.itop);
++            *this = after;
++            std::memcpy(vuData, dataAfter.data(), dataSize);
++            m_native->enabled = true;
++            m_verifySilent = silentBefore;
++        }
++    }
 +    commitReadyFlags(); // GOW-Port: el estado visible tras la ejecución
      m_state.cycles = m_cycle;
 +    // GOW_VU1_STARTMAC=1 also counts the MAC flag a startPc 0 program ends with (A/B with PCSX2's interpreter)

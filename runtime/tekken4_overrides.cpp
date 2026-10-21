@@ -379,6 +379,121 @@ namespace tekken4
         if (log)
             RUNTIME_LOG("[tekken4] " << what << " (a0=" << cause << ") frame " << g_frames << ": " << before << "  ->  "
                                      << ringState(rdram) << "\n");
+        // First time path 1 ends before the frame-end +1 (VIF1 end count 2 while nothing is pending), save the
+        // ring so it can be compared with PCSX2's (logs: ring_early_end.bin, 0x100000-0x110000).
+        static bool dumped = false;
+        const uint8_t *s = rdram + 0x1cda2c0u;
+        int32_t pending = 0;
+        std::memcpy(&pending, s + 4, 4);
+        if (!dumped && cause == 1u && s[2] == 2u && pending == 0 && s[3] == 1u)
+        {
+            dumped = true;
+            std::ofstream("ring_early_end.bin", std::ios::binary).write(reinterpret_cast<const char *>(rdram + 0x100000u), 0x10000);
+            RUNTIME_LOG("[tekken4] path 1 ended before frame end: ring saved to ring_early_end.bin\n");
+        }
+    }
+
+    // The game's "close DMA tag" of its VIF packet library (0x292900, not recognised as an SDK function, so it runs
+    // as game code): pads pk->cur to a qword, then ADDS (cur - tag)/16 - 1 to the open tag's first word. The
+    // runtime's stubs for the recognised library calls (sceGifPkAddGsAD etc.) already keep that qwc field up to
+    // date as they write (refreshPacketBuilderPendingCount), so tags built with both came out with qwc doubled
+    // (image-upload CNT 10 instead of 5: VIF1 then misread the ring and the frame's DMA interrupts looped).
+    // Same function, but the qwc is SET, which is right whether or not stubs touched the tag.
+    // pk layout: [0] cur, [1] base, [2] open DMA tag, [3] open GIF tag.
+    void closeDmaTag(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        (void)runtime;
+        ctx->pc = getRegU32(ctx, 31);
+        const uint32_t pk = getRegU32(ctx, 4);
+        uint8_t *p = getMemPtr(rdram, pk);
+        if (!p)
+            return;
+        uint32_t cur = 0, tag = 0;
+        std::memcpy(&cur, p, 4);
+        std::memcpy(&tag, p + 8, 4);
+        const uint32_t zero = 0;
+        for (; (cur & 0xCu) != 0u; cur += 4u)
+            if (uint8_t *w = getMemPtr(rdram, cur))
+                std::memcpy(w, &zero, 4);
+        if (uint8_t *t = tag ? getMemPtr(rdram, tag) : nullptr)
+        {
+            uint32_t word0 = 0;
+            std::memcpy(&word0, t, 4);
+            const uint32_t qwc = ((cur - tag) >> 4) - 1u;
+            word0 = (word0 & 0xFFFF0000u) | (qwc & 0xFFFFu);
+            std::memcpy(t, &word0, 4);
+        }
+        std::memcpy(p + 8, &zero, 4);
+        std::memcpy(p, &cur, 4);
+        setReturnU32(ctx, cur);
+    }
+
+    // Debug: the same close, logged from frame 4 on (TEKKEN4_IRQ_LOG).
+    std::atomic<int> g_closeLogLeft{60};
+    void closeTagLogged(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        const uint32_t pk = getRegU32(ctx, 4);
+        uint32_t pkWords[4] = {};
+        if (const uint8_t *p = getMemPtr(rdram, pk))
+            std::memcpy(pkWords, p, sizeof(pkWords));
+        uint32_t tagBefore = 0;
+        const uint8_t *tagPtr = pkWords[2] ? getMemPtr(rdram, pkWords[2]) : nullptr;
+        if (tagPtr)
+            std::memcpy(&tagBefore, tagPtr, 4);
+        closeDmaTag(rdram, ctx, runtime);
+        if (g_frames >= 4 && g_closeLogLeft.fetch_sub(1) > 0)
+        {
+            uint32_t tagAfter = 0, pkAfter[4] = {};
+            if (tagPtr)
+                std::memcpy(&tagAfter, tagPtr, 4);
+            if (const uint8_t *p = getMemPtr(rdram, pk))
+                std::memcpy(pkAfter, p, sizeof(pkAfter));
+            RUNTIME_LOG("[tekken4] close tag pk 0x" << std::hex << pk << " cur " << pkWords[0] << " tag " << pkWords[2]
+                                                    << " word0 " << tagBefore << " -> " << tagAfter << " | after: cur "
+                                                    << pkAfter[0] << " tag " << pkAfter[2] << " ra " << getRegU32(ctx, 31)
+                                                    << std::dec << "\n");
+        }
+    }
+
+    // Around the open-CNT (0x292970) and sceGifPkCloseGifTag (0x292b28): pk words and the scratchpad qwords.
+    std::atomic<int> g_pkLogLeft{40};
+    void logPk(const char *what, uint8_t *rdram, uint32_t pk, const char *when)
+    {
+        uint32_t w[4] = {};
+        if (const uint8_t *p = getMemPtr(rdram, pk))
+            std::memcpy(w, p, sizeof(w));
+        std::ostringstream o;
+        o << std::hex << what << " " << when << ": pk cur " << w[0] << " dmatag " << w[2] << " giftag " << w[3];
+        for (uint32_t a : {w[2], w[3]})
+            if (const uint8_t *q = a ? getMemPtr(rdram, a) : nullptr)
+            {
+                uint64_t lo = 0;
+                std::memcpy(&lo, q, 8);
+                o << " [" << a << "]=" << lo;
+            }
+        RUNTIME_LOG("[tekken4] " << o.str() << "\n");
+    }
+    void openCntLogged(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        const uint32_t pk = getRegU32(ctx, 4);
+        const bool log = g_frames >= 4 && g_pkLogLeft.fetch_sub(1) > 0;
+        if (log)
+            RUNTIME_LOG("[tekken4] open CNT args a1 " << std::hex << getRegU32(ctx, 5) << " a2 " << getRegU32(ctx, 6)
+                                                      << " a3 " << getRegU32(ctx, 7) << " ra " << getRegU32(ctx, 31)
+                                                      << std::dec << "\n");
+        FUN_00292970_0x292970(rdram, ctx, runtime);
+        if (log)
+            logPk("open CNT", rdram, pk, "after");
+    }
+    void closeGifLogged(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        const uint32_t pk = getRegU32(ctx, 4);
+        const bool log = g_frames >= 4 && g_pkLogLeft.fetch_sub(1) > 0;
+        if (log)
+            logPk("close GIF", rdram, pk, "before");
+        sceGifPkCloseGifTag_0x292b28(rdram, ctx, runtime);
+        if (log)
+            logPk("close GIF", rdram, pk, "after ");
     }
 
     void vif1EndLogged(uint8_t *r, R5900Context *c, PS2Runtime *p) { logged<FUN_00233430_0x233430>("VIF1 end handler", r, c, p); }
@@ -388,6 +503,7 @@ namespace tekken4
 
     void apply(PS2Runtime &runtime)
     {
+        runtime.registerFunction(0x00292900u, closeDmaTag);
         if (const char *irqLog = std::getenv("TEKKEN4_IRQ_LOG"))
         {
             g_irqLogLeft = std::atoi(irqLog);
@@ -395,6 +511,9 @@ namespace tekken4
             runtime.registerFunction(0x00233548u, gifEndLogged);
             runtime.registerFunction(0x00232d20u, frameStartLogged);
             runtime.registerFunction(0x00233a38u, frameEndLogged);
+            runtime.registerFunction(0x00292900u, closeTagLogged);
+            runtime.registerFunction(0x00292970u, openCntLogged);
+            runtime.registerFunction(0x00292b28u, closeGifLogged);
         }
         if (const char *watch = std::getenv("TEKKEN4_WATCH_MS"))
         {

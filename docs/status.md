@@ -11,7 +11,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   (see "First run"); 350 missing functions added (4 constructors + 346 vtable/callback targets) (see "Missing
   functions fix"); silent sound-driver override (see "Sound driver override"); MFIFO + D_ENABLE runtime
   patch (see "MFIFO + D_ENABLE patch"). Milestone 4 published (see "Publishing").
-- **Resume at: milestone 5, texture-upload CNT built with qwc 10 instead of 5** (see "Surplus interrupts traced").
+- **Resume at: milestone 5, menu draws partly: missing glyphs, top-half placement, garbage squares** (see "Result: the menu draws").
 - **Session 3 goal: milestone 5.** The first screen (display-mode menu) draws its 10-strip box, but grey, without
   text, in the top half only. Start from "Next steps" #1.
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
@@ -314,6 +314,17 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
   FUN_001feef8, FUN_0020cb68, FUN_00227f80, FUN_002344e0 (the last uses sceVif1Pk* and emits REF tags, so
   not it). Next: find which one builds this CNT (its qwc comes from the GIF part it opens), compare its
   inputs/outputs with PCSX2 (PINE: dump scratchpad/ring right after it), fix the cause.
+- **Fixed: doubled DMA tag counts (override, 0x292900).** The game's VIF packet library close-tag function
+  (0x292900, not recognised as SDK code, so it runs as game code) ADDS (cur - tag)/16 - 1 to the open tag.
+  The runtime's stubs for the recognised calls (sceGifPkAddGsAD, sceGifPkCloseGifTag, ...) already keep that
+  qwc current as they write (`refreshPacketBuilderPendingCount` in Stubs/GS.cpp), so mixed tags got qwc x2
+  (image-upload CNT 10 instead of 5). The override replaces 0x292900 with the same function that SETS the
+  qwc. Upstream issue to report: live qwc refresh in the pk stubs + a game's own (unstubbed) close = double.
+  Found by logging pk state around open (0x292970), sceGifPkCloseGifTag and close (TEKKEN4_IRQ_LOG).
+- **Result: the menu draws.** All 24 files load once, the main loop runs (~44 fps over 1000+ frames) and the
+  display-mode menu appears: brown panel in its real colour, "Caution:" readable, but most glyphs missing,
+  the panel in the top half (field not scaled to the full picture) and three garbled squares at the bottom
+  left. Screenshot: docs/img/m5_first_menu_partial.png (our build's output).
 - Also in the dma-chain patch: a chain that ends without data (lone END/REFE/IRQ tag) now completes its
   channel (upstream left STR set and raised no interrupt). Correct per hardware, but didn't fix the hang.
 - Side findings: the menu text isn't in the ELF; the IOP module package is embedded LZ-compressed and

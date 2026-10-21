@@ -18,7 +18,8 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   The intro movie now plays (see "Intro movie").
   Strip gaps fixed (patch 05, see "Sprite strip gaps").
   Vibrating picture fixed (patch 06, see "Field offset").
-- **Resume at: "Next steps" #1, the title screen after the movie (compare with PCSX2).**
+  After the movie (Start skips it) the first-run difficulty screen works (see "Difficulty screen").
+- **Resume at: "Next steps" #1, the dashed lines on the difficulty screen, then on to the main menu.**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
@@ -425,6 +426,19 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
   flicker by a line between fields, as on a TV); PAL60 dialog 0.01-0.06; logo 0 (logs/field_off, field_on,
   field_final). A blend of the last two fields would remove the edge flicker too, if it is still visible.
 
+## Difficulty screen (session 3, 2026-10-21)
+- PCSX2 and ours, same input (PAL60, Yes, Start at 30 s to skip the movie): the first-run screen "MODE SELECT /
+  SET GAME DIFFICULTY" (EASY .. ULTRA HARD, MEDIUM selected; PCSX2's copy is in German). logs/pcsx2_title,
+  logs/title1..4.
+- The menu titles and the TEKKEN 4 logo were upside down: DrawSprite sorted the corners but not their UVs, so a
+  sprite sent bottom-right first was mirrored. **Patch 07** swaps U/V with X/Y (also PR #377, second commit, with
+  a test). docs/img/difficulty_screen.png.
+- Tried and dropped: making a zero-size sprite draw nothing (GS behaviour). 8 upstream tests draw sprites with
+  both corners on one point and expect a pixel, and it did not remove the dashed lines.
+- Still off: thin dashed lines (left/right of "SET GAME DIFFICULTY", on the MEDIUM row, a vertical one by the
+  logo, purple dashes at the bottom). Not in PCSX2. Next: GS dump of this screen (TEKKEN4_GS_DUMP ~1150 with the
+  Start key) and find which primitives draw them.
+
 ## Publishing (from 2026-10-21)
 The user pre-authorized publishing every successful milestone on three channels:
 - **Project repo (public):** https://github.com/Lautreck/tekken4-recomp (`origin`, branch `master`). Commits use
@@ -445,7 +459,7 @@ The user pre-authorized publishing every successful milestone on three channels:
 - PR #376 https://github.com/ran-j/PS2Recomp/pull/376 = patch 04 + a test, sceMpegCreate clears mp->sys word 0
   (branch `mpeg-create-clears-end`, commit ccaa06f, worktree `external/ps2recomp-pr4`, 446/446).
 - PR #375 also carries patch 06 (second commit d9141f2, field offset; title and description updated, 447/447).
-- PR #377 https://github.com/ran-j/PS2Recomp/pull/377 = patch 05 + a test (two strips 0..63.5 and 64..127.5),
+- PR #377 https://github.com/ran-j/PS2Recomp/pull/377 = patches 05 + 07 with tests (two commits) (two strips 0..63.5 and 64..127.5),
   branch `sprite-edge-coverage`, worktree `external/ps2recomp-pr5`, 446/446. The test is only in the PR branch.
 - Not published yet: the intro movie (no milestone page; publish with milestone 6, the title screen).
 - **Milestone pages** (private until the user shares them from the page's Share menu): milestone 4 at
@@ -453,7 +467,8 @@ The user pre-authorized publishing every successful milestone on three channels:
   https://claude.ai/artifact/CoN3nkpepFjyn5LSbPEQ7j (menu, PAL60 confirmation, Namco logo; four fixes).
 
 ## Next steps
-1. After the movie: follow the game to the title screen and compare with PCSX2 (input to skip the movie: Start).
+1. Dashed lines on the difficulty screen (see "Difficulty screen"), then pick MEDIUM (Cross) and follow the game
+   to its main menu vs PCSX2. Reaching the main menu = milestone 6: publish its page (movie, display fixes).
 2. Frame pacing: 38-47 vs 50/60 fps. The loop busy-waits on `RCNT0_COUNT >= 0x724` and on vsync.
 3. Sound for real (milestone 8): find how the game loads its IOP modules (sceSifRebootIop with
    IOPRP243.IMG, then module buffers probably from DATA.BIN), extract the sound IRX and run it on ps2xIOP's

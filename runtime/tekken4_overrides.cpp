@@ -54,38 +54,45 @@ namespace tekken4
     // Where TEKKEN/DATA.BIN sits on this disc (ISO9660 directory of SCES-50878 v2.00).
     constexpr uint64_t kDataBinLbn = 1236u;
     constexpr uint64_t kDataBinSize = 2694412288u;
-    std::ifstream g_disc;            // the ISO, or a loose DATA.BIN if one was extracted next to the ELF
+    std::ifstream g_disc;            // the ISO, or else a loose DATA.BIN extracted next to the ELF
     uint64_t g_discBase = 0u;        // byte offset of DATA.BIN inside g_disc
     bool g_discTried = false;
 
+    // The ISO comes first: it holds the whole disc, so a sector past DATA.BIN (DATA2.BIN follows it) reads as on
+    // a console. A loose TEKKEN/DATA.BIN is only a fallback for setups without the image.
     bool openDisc()
     {
         if (g_discTried)
             return g_disc.is_open();
         g_discTried = true;
         const PS2Runtime::IoPaths &paths = PS2Runtime::getIoPaths();
-        std::filesystem::path source = paths.cdRoot / "TEKKEN" / "DATA.BIN";
+        std::filesystem::path source;
         std::error_code ec;
-        if (std::filesystem::exists(source, ec))
-            g_discBase = 0u;
-        else
+        if (const char *env = std::getenv("TEKKEN4_ISO"))
+            source = env;
+        else // the first .iso in the project root (the ELF lives in <root>/game/disc)
+            for (const auto &entry : std::filesystem::directory_iterator(paths.elfDirectory.parent_path().parent_path(), ec))
+                if (entry.path().extension() == ".iso")
+                {
+                    source = entry.path();
+                    break;
+                }
+        if (!source.empty())
         {
-            source.clear();
-            if (const char *env = std::getenv("TEKKEN4_ISO"))
-                source = env;
-            else // the first .iso in the project root (the ELF lives in <root>/game/disc)
-                for (const auto &entry : std::filesystem::directory_iterator(paths.elfDirectory.parent_path().parent_path(), ec))
-                    if (entry.path().extension() == ".iso")
-                    {
-                        source = entry.path();
-                        break;
-                    }
+            g_disc.open(source, std::ios::binary);
             g_discBase = kDataBinLbn * 2048u;
         }
-        if (!source.empty())
-            g_disc.open(source, std::ios::binary);
+        if (!g_disc.is_open())
+        {
+            source = paths.cdRoot / "TEKKEN" / "DATA.BIN";
+            if (std::filesystem::exists(source, ec))
+            {
+                g_disc.open(source, std::ios::binary);
+                g_discBase = 0u;
+            }
+        }
         RUNTIME_LOG("[tekken4] driver reads from "
-                    << (g_disc.is_open() ? source.string() : std::string("NOTHING (no DATA.BIN, no ISO; set TEKKEN4_ISO)"))
+                    << (g_disc.is_open() ? source.string() : std::string("NOTHING (no ISO, no DATA.BIN; set TEKKEN4_ISO)"))
                     << "\n");
         return g_disc.is_open();
     }
@@ -101,7 +108,7 @@ namespace tekken4
         if (mode == 0u && size != 0u && phys + static_cast<uint64_t>(size) <= PS2_RAM_SIZE && openDisc())
         {
             const uint64_t offset = static_cast<uint64_t>(sector) * 2048u;
-            if (offset >= kDataBinSize) // not seen yet; DATA2.BIN's mapping is unknown
+            if (offset >= kDataBinSize) // not seen yet: from the ISO it reads on into DATA2.BIN, a loose DATA.BIN fails
                 RUNTIME_LOG("[tekken4] sector " << sector << " is past DATA.BIN\n");
             g_disc.clear();
             g_disc.seekg(static_cast<std::streamoff>(g_discBase + offset));

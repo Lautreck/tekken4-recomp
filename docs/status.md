@@ -283,7 +283,8 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
   **Sectors count from the start of DATA.BIN** (disc LBN 1236): with that base every checksum matches
   (decrypt first 4 KB `~w + key`, key = the table's short at +0xe, -1 = plain). game/disc has no DATA.BIN
   (only the ELF, SYSTEM.CNF, IOPRP were extracted), so the override reads the ISO in the project root at
-  (1236 + sector) * 2048 (or a loose game/disc/TEKKEN/DATA.BIN if present; TEKKEN4_ISO overrides the path).
+  (1236 + sector) * 2048 (TEKKEN4_ISO overrides the path). The ISO is always preferred (it also has DATA2.BIN
+  after DATA.BIN); a loose game/disc/TEKKEN/DATA.BIN is only a fallback when no ISO is found. No need to extract.
   Mode 6/7 requests (e.g. sector 9378, 1.2 MB -> 0x5010) target sound/IOP memory: logged, not copied.
   Result: the first file loads and passes its checksum, the sound bank request follows, then the main loop
   stops after frame 1 and a few garbled coloured pixels appear at the bottom left.

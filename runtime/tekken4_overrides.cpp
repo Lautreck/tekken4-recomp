@@ -10,6 +10,7 @@
 #include "Stubs/CD.h"
 #include <ps2_recompiled_functions.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -114,6 +115,78 @@ namespace tekken4
         std::memcpy(&done, rdram + kDiscReadDoneFlag, 4);
         ++done;
         std::memcpy(rdram + kDiscReadDoneFlag, &done, 4);
+    }
+
+    // Movies (player FUN_00228520). Call 0x3000 (sector, size, file, mode) opens a movie file; each 0x3200
+    // (EE destination, sectors) then asks for the next sectors of its video, into a ring the player decodes with
+    // libmpeg. The files interleave 0x27 sectors of MPEG-2 video with 2 sectors of SPU ADPCM audio, which the
+    // driver keeps (PCSX2's ring holds the video units back to back). The driver answers with SIF command 4,
+    // whose handler 0x229350 stores the byte count at gp-0x5144 = 0x35a12c; the player sets it to -1 before
+    // asking (FUN_00229108). Call 0x3100 closes the stream. Mode 1 (0x10000-byte requests) is not verified yet.
+    constexpr uint32_t kMovieOpenCall = 0x3000u;
+    constexpr uint32_t kMovieReadCall = 0x3200u;
+    constexpr uint32_t kMovieCloseCall = 0x3100u;
+    constexpr uint32_t kMovieReadResult = 0x0035a12cu;
+    constexpr uint32_t kMovieVideoBytes = 0x27u * 2048u; // per interleave unit
+    constexpr uint32_t kMovieAudioBytes = 2u * 2048u;
+    // The driver's per-frame reply (call 0x100, word 3) carries the movie stream's status: 0x200 = its audio is
+    // ready (FUN_00229040; the player starts the sound and the picture display only then), 0x100 = the stream has
+    // ended (FUN_00229030).
+    constexpr uint32_t kFrameReplyStatusWord = 3u;
+    constexpr uint32_t kStatusMovieAudioReady = 0x200u;
+    constexpr uint32_t kStatusMovieEnded = 0x100u;
+    uint32_t g_movieSector = 0u;
+    uint32_t g_movieSize = 0u;
+    uint32_t g_movieVideoPos = 0u; // video bytes already delivered
+    bool g_movieEnded = false;
+
+    void movieOpen(uint8_t *rdram, uint32_t sendAddr)
+    {
+        uint32_t args[4] = {};
+        if (const uint8_t *send = getMemPtr(rdram, sendAddr))
+            std::memcpy(args, send, sizeof(args));
+        g_movieSector = args[0];
+        g_movieSize = args[1];
+        g_movieVideoPos = 0u;
+        g_movieEnded = false;
+        RUNTIME_LOG("[tekken4] movie open: file 0x" << std::hex << args[2] << " sector " << std::dec << args[0]
+                                                   << " size " << args[1] << " mode " << args[3]
+                                                   << (args[3] != 0u ? " (mode 1 layout unverified)" : "") << "\n");
+    }
+
+    void movieRead(uint8_t *rdram, uint32_t sendAddr)
+    {
+        uint32_t args[2] = {};
+        if (const uint8_t *send = getMemPtr(rdram, sendAddr))
+            std::memcpy(args, send, sizeof(args));
+        const uint32_t phys = args[0] & 0x01FFFFFFu;
+        uint32_t want = args[1] * 2048u;
+        if (phys + static_cast<uint64_t>(want) > PS2_RAM_SIZE)
+            want = 0u;
+        uint32_t done = 0u;
+        while (done < want && openDisc())
+        {
+            // Video offset -> file offset: skip the audio sectors of every unit before it.
+            const uint32_t unit = g_movieVideoPos / kMovieVideoBytes;
+            const uint32_t inUnit = g_movieVideoPos % kMovieVideoBytes;
+            const uint64_t fileOffset = static_cast<uint64_t>(unit) * (kMovieVideoBytes + kMovieAudioBytes) + inUnit;
+            if (fileOffset >= g_movieSize)
+            {
+                g_movieEnded = true;
+                break;
+            }
+            uint32_t n = std::min(want - done, kMovieVideoBytes - inUnit);
+            n = static_cast<uint32_t>(std::min<uint64_t>(n, g_movieSize - fileOffset));
+            g_disc.clear();
+            g_disc.seekg(static_cast<std::streamoff>(g_discBase + static_cast<uint64_t>(g_movieSector) * 2048u + fileOffset));
+            g_disc.read(reinterpret_cast<char *>(rdram + phys + done), n);
+            const uint32_t got = static_cast<uint32_t>(g_disc.gcount());
+            done += got;
+            g_movieVideoPos += got;
+            if (got != n)
+                break;
+        }
+        std::memcpy(rdram + kMovieReadResult, &done, 4);
     }
 
     std::mutex g_mutex;
@@ -301,6 +374,18 @@ namespace tekken4
         }
         if (function == kDiscReadCall)
             discRead(rdram, getRegU32(ctx, 7));
+        else if (function == kMovieOpenCall)
+            movieOpen(rdram, getRegU32(ctx, 7));
+        else if (function == kMovieReadCall)
+            movieRead(rdram, getRegU32(ctx, 7));
+        else if (function == kMovieCloseCall)
+            g_movieSize = 0u;
+        else if (function == kSoundFrameCall && g_movieSize != 0u && replySize >= 16u)
+        {
+            const uint32_t status = kStatusMovieAudioReady | (g_movieEnded ? kStatusMovieEnded : 0u);
+            if (uint8_t *dst = getMemPtr(rdram, reply))
+                std::memcpy(dst + kFrameReplyStatusWord * 4u, &status, 4);
+        }
 
         std::lock_guard<std::mutex> lock(g_mutex);
         if (g_loggedCalls.insert(function).second)
@@ -504,9 +589,108 @@ namespace tekken4
     void frameStartLogged(uint8_t *r, R5900Context *c, PS2Runtime *p) { logged<FUN_00232d20_0x232d20>("frame start     ", r, c, p); }
     void frameEndLogged(uint8_t *r, R5900Context *c, PS2Runtime *p) { logged<FUN_00233a38_0x233a38>("frame end (+1)  ", r, c, p); }
 
+    // Movie pictures. libmpeg's sceMpegGetPicture calls the player's "no data" callback (sceMpegCbNodata,
+    // 0x2281d0) whenever the IPU runs out of bitstream. The callback pumps the disc stream (FUN_00229108), takes the
+    // previous chunk out of the movie ring and points a toIPU DMA (channel 4, chain mode, one REFE tag at
+    // 0x1ccd2b0) at the next 0x9c00 bytes. The runtime's decoder takes bitstream from sceMpegAddBs or PSS demuxing
+    // and never calls that callback, so GetPicture waited forever. Here GetPicture first runs the callback the way
+    // libmpeg would, hands each transfer it starts to sceMpegAddBs and stops the channel as if the IPU had taken
+    // it, until a picture is decoded.
+    constexpr uint32_t kSceMpegGetPicture = 0x0028bb40u;
+    constexpr uint32_t kMovieNodataCallback = 0x002281d0u;
+    constexpr uint32_t kMovieIpuTag = 0x01ccd2b0u;
+    constexpr uint32_t kIpuToChcr = 0x1000b400u;
+    constexpr int kMaxNodataCalls = 64;
+
+    // Runs a guest function to completion from host code: returns to pc 0 like the scheduler's invocations.
+    bool callGuest(uint8_t *rdram, const R5900Context &caller, PS2Runtime *runtime, uint32_t function, uint32_t a0)
+    {
+        R5900Context call = caller;
+        SET_GPR_U32(&call, 4, a0);
+        SET_GPR_U32(&call, 31, 0u);
+        call.pc = function;
+        for (int steps = 0; call.pc != 0u && steps < 100000; ++steps)
+        {
+            PS2Runtime::RecompiledFunction fn = runtime->lookupFunction(call.pc);
+            if (!fn)
+                return false;
+            fn(rdram, &call, runtime);
+        }
+        return call.pc == 0u;
+    }
+
+    bool mpegHasPicture(uint8_t *rdram, const R5900Context &caller, PS2Runtime *runtime, uint32_t mpeg)
+    {
+        R5900Context query = caller;
+        SET_GPR_U32(&query, 4, mpeg);
+        ps2_stubs::sceMpegIsRefBuffEmpty(rdram, &query, runtime);
+        return getRegU32(&query, 2) == 0u;
+    }
+
+    uint64_t g_movieBytesFed = 0u;
+
+    void mpegGetPicture(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        ctx->pc = getRegU32(ctx, 31);
+        const uint32_t mpeg = getRegU32(ctx, 4);
+        uint8_t *tag = getMemPtr(rdram, kMovieIpuTag);
+        for (int i = 0; tag && i < kMaxNodataCalls && !mpegHasPicture(rdram, *ctx, runtime, mpeg); ++i)
+        {
+            std::memset(tag, 0, 16);
+            if (!callGuest(rdram, *ctx, runtime, kMovieNodataCallback, mpeg))
+                break;
+            uint64_t refe = 0;
+            std::memcpy(&refe, tag, 8);
+            if (refe == 0u) // the callback had no data to send yet; it pumped the stream, so ask again
+                continue;
+            const uint32_t qwc = static_cast<uint32_t>(refe & 0xFFFFu);
+            const uint32_t addr = static_cast<uint32_t>((refe >> 32) & 0x0FFFFFF0u);
+            R5900Context feed = *ctx;
+            SET_GPR_U32(&feed, 4, mpeg);
+            SET_GPR_U32(&feed, 5, addr);
+            SET_GPR_U32(&feed, 6, qwc * 16u);
+            ps2_stubs::sceMpegAddBs(rdram, &feed, runtime);
+            runtime->memory().writeIORegister(kIpuToChcr, runtime->memory().readIORegister(kIpuToChcr) & ~0x100u);
+            if (g_movieBytesFed == 0u)
+                RUNTIME_LOG("[tekken4] movie: first bitstream to the decoder, 0x" << std::hex << qwc * 16u
+                                                                                << " bytes from 0x" << addr << std::dec << "\n");
+            g_movieBytesFed += qwc * 16u;
+        }
+        ps2_stubs::sceMpegGetPicture(rdram, ctx, runtime);
+    }
+
+    // Debug aid (TEKKEN4_MOVIE_LOG=<count>): the movie player's state and the values its exits test, logged on
+    // each pass while it plays (state 3..6), up to <count> lines.
+    std::atomic<int> g_movieLogLeft{0};
+    void moviePlayerLogged(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        auto w = [rdram](uint32_t addr)
+        {
+            uint32_t v = 0u;
+            std::memcpy(&v, rdram + addr, 4);
+            return static_cast<int32_t>(v);
+        };
+        const int32_t before = w(0x01ccd2c0u);
+        FUN_00228520_0x228520(rdram, ctx, runtime);
+        if (before >= 3 && before <= 6 && g_movieLogLeft.fetch_sub(1) > 0)
+            RUNTIME_LOG("[tekken4] movie player state " << before << " -> " << w(0x01ccd2c0u) << ": frame " << w(0x01ccd2d8u)
+                                                       << " shown " << w(0x01ccd364u) << " bufs " << w(0x01ccd3a4u)
+                                                       << " a120 " << w(0x0035a120u) << " end35c " << w(0x01ccd35cu)
+                                                       << " exit358 " << w(0x01ccd358u) << " pad " << std::hex
+                                                       << w(0x00358754u) << std::dec << " skipflag " << w(0x00359f68u)
+                                                       << " mode2c4 " << w(0x01ccd2c4u) << " wait38c " << w(0x01ccd38cu)
+                                                       << " buffered " << w(0x01ccd3d8u) << "\n");
+    }
+
     void apply(PS2Runtime &runtime)
     {
         runtime.registerFunction(0x00292900u, closeDmaTag);
+        runtime.registerFunction(kSceMpegGetPicture, mpegGetPicture);
+        if (const char *movieLog = std::getenv("TEKKEN4_MOVIE_LOG"))
+        {
+            g_movieLogLeft = std::atoi(movieLog);
+            runtime.registerFunction(0x00228520u, moviePlayerLogged);
+        }
         if (const char *irqLog = std::getenv("TEKKEN4_IRQ_LOG"))
         {
             g_irqLogLeft = std::atoi(irqLog);

@@ -15,7 +15,8 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   fixes upstreamed as PR #373 (PATH2 continuation redone to keep upstream's tests passing), pk stub issue #374,
   milestone 5 page (see "Publishing"). Display fixed: interlaced FRAME mode now shows the half-height buffer
   line-doubled, full screen like PCSX2 (patch 03 = PR #375, see "Display line repeat").
-- **Resume at: "Next steps" #1, the white screen ~19 s after the logo (compare with PCSX2).**
+  The intro movie now plays (see "Intro movie").
+- **Resume at: "Next steps" #1, the 1-pixel gaps between sprite strips (vertical lines on the menu and movie).**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
@@ -374,6 +375,28 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
 - After the logo (logs/after_logo1, PAL60 + Yes): black from ~24 s, then a near-white screen (mean 244/255) from
   ~36 s to at least 56 s.
 
+## Intro movie (session 3, 2026-10-21)
+- PCSX2 (logs/pcsx2_after_logo): logo 18-22 s, then the intro movie from ~24 s. Ours: black, then white: the
+  player (FUN_00228520, states 2 init, 3 buffer, 4 play, 5/6 stop) gave up.
+- **Stream.** Movies are files in the table at 0x314360 (movie table 0x31fdd0: file, first/last frame; the intro is
+  file 1 = entry 0xb2, sector 58196, 129 MB). They interleave 0x27 sectors of MPEG-2 video (ES, 640x448) with 2
+  sectors of SPU ADPCM audio. Driver call 0x3000 (sector, size, file, mode) opens the stream, 0x3200 (EE dest,
+  sectors) reads the next video sectors into the player's ring (0xea000 bytes = 12 x 0x13800), 0x3100 closes.
+  The driver answers a read with SIF command 4: handler 0x229350 stores the byte count at 0x35a12c (handlers set
+  up in FUN_00229540: cid 1 = disc read done, 4 = stream read). PCSX2's ring (PINE, logs/pcsx2_movie_probe) is
+  the video units back to back. The override now serves 0x3000/0x3200/0x3100 from the ISO.
+- **Decoder input.** sceMpegGetPicture is the runtime's FFmpeg stub, fed by sceMpegAddBs or PSS demuxing. The game
+  feeds the IPU itself: libmpeg calls its no-data callback (0x2281d0), which points a toIPU DMA (ch 4, REFE tag at
+  0x1ccd2b0) at the next 0x9c00 ring bytes. The override's GetPicture runs that callback (a nested guest call)
+  and passes each transfer to sceMpegAddBs until a picture is decoded.
+- **End flag.** The game's own sceMpegIsEnd (0x28bc58) returns the first word of mp->sys, which the runtime's
+  sceMpegCreate never cleared: the movie "ended" after one picture. Patch 04 clears it (generic libmpeg behaviour).
+- **Display start.** The picture is shown by the vsync handler (FUN_002280d0) only after the player started the
+  movie audio, which waits for status bit 0x200 in the driver's per-frame reply (0x100 call, word 3; 0x100 =
+  stream ended). The override reports 0x200 while a movie is open and 0x100 when its file runs out.
+- Result: the intro plays (docs/img/movie_intro_volcano.png, movie_intro_scene.png), no sound. Thin vertical lines
+  every 64 px are gaps between the picture's sprite strips (the menu box has them too); PCSX2 has none.
+
 ## Publishing (from 2026-10-21)
 The user pre-authorized publishing every successful milestone on three channels:
 - **Project repo (public):** https://github.com/Lautreck/tekken4-recomp (`origin`, branch `master`). Commits use
@@ -396,16 +419,17 @@ The user pre-authorized publishing every successful milestone on three channels:
   https://claude.ai/artifact/CoN3nkpepFjyn5LSbPEQ7j (menu, PAL60 confirmation, Namco logo; four fixes).
 
 ## Next steps
-1. After the logo: black from ~24 s, then a near-white screen from ~36 s on (logs/after_logo1). Run PCSX2 the
-   same way (PAL60, Yes) with shots at 24-60 s and see what it shows (intro movie? title screen?). If it is a
-   movie, look at the IPU/MPEG path (the ELF links libmpeg/libipu).
-2. Frame pacing: 38-47 vs 50/60 fps. The loop busy-waits on `RCNT0_COUNT >= 0x724` and on vsync.
-3. Sound for real (milestone 8): find how the game loads its IOP modules (sceSifRebootIop with
+1. Sprite strip gaps: the menu box and the movie are drawn as 64-px strips and every strip edge leaves a dark
+   1-px column in our GS renderer (none in PCSX2). Check the strips' XYZ/UV (GS dump: TEKKEN4_GS_DUMP) against the
+   GS sprite rules (pixel centers, X1 inclusive / X2 exclusive, XYOFFSET) in gs_cpu_backend's sprite raster.
+2. After the movie: follow the game to the title screen and compare with PCSX2 (input to skip the movie: Start).
+3. Frame pacing: 38-47 vs 50/60 fps. The loop busy-waits on `RCNT0_COUNT >= 0x724` and on vsync.
+4. Sound for real (milestone 8): find how the game loads its IOP modules (sceSifRebootIop with
    IOPRP243.IMG, then module buffers probably from DATA.BIN), extract the sound IRX and run it on ps2xIOP's
    emulated IOP. Then the override's sound part goes away.
-4. Watch PRs #372/#373/#375 and issue #374: when merged, move `external/PS2Recomp` back to upstream main and drop the
+5. Watch PRs #372/#373/#375 and issue #374: when merged, move `external/PS2Recomp` back to upstream main and drop the
    patch files.
-5. Re-export from Ghidra (3 late SDK renames) whenever Ghidra is next used for an export; rerun post-process.
-6. Later: export Ghidra's switch tables into `[jump_tables]` to cut the unresolved JR sites.
-7. Watch: upstream keeps its RPC server pool at guest 0x01F10000, above the game's stack top (sp starts
+6. Re-export from Ghidra (3 late SDK renames) whenever Ghidra is next used for an export; rerun post-process.
+7. Later: export Ghidra's switch tables into `[jump_tables]` to cut the unresolved JR sites.
+8. Watch: upstream keeps its RPC server pool at guest 0x01F10000, above the game's stack top (sp starts
    ~0x1f00000). If a heap ever lives there, see the GoW `GuestReservedLayout` lesson.

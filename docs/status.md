@@ -483,6 +483,10 @@ The user pre-authorized publishing every successful milestone on three channels:
 
 ## Next steps
 1. Milestone 7, a fight: ARCADE (Down, Cross), character select, then the stage. Compare with PCSX2 at each step.
+   First stop found: after Arcade (keys ...,"36:Cross","40:Down","41.5:Cross"), PCSX2 shows CHOOSE YOUR FIGHTER
+   (logs/pcsx2_arcade); ours loads the select screen's files (disc reads at sectors 1043812-1044716, one mode-6
+   read of 29824 bytes to IOP 0x12b090 skipped) and then shows only black (logs/arcade1). Check first whether the
+   main loop still runs (TEKKEN4_PRESENT_LOG / frame log), then what the select screen waits for or draws.
    Also: pad 2 reported as connected (VS BATTLE enabled), attract demo timing. Reaching the main menu = milestone 6: publish its page (movie, display fixes).
 2. Frame pacing: 38-47 vs 50/60 fps. The loop busy-waits on `RCNT0_COUNT >= 0x724` and on vsync.
 3. Sound for real (milestone 8): find how the game loads its IOP modules (sceSifRebootIop with

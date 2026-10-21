@@ -1,5 +1,5 @@
 diff --git a/ps2xRuntime/src/lib/ps2_memory.cpp b/ps2xRuntime/src/lib/ps2_memory.cpp
-index 1854be1..4ea5e73 100644
+index 1854be1..ee227b9 100644
 --- a/ps2xRuntime/src/lib/ps2_memory.cpp
 +++ b/ps2xRuntime/src/lib/ps2_memory.cpp
 @@ -3,7 +3,14 @@
@@ -76,7 +76,7 @@ index 1854be1..4ea5e73 100644
          uint32_t scratchOffset = originalSadr;
          for (uint32_t done = 0u; done < byteCount; done += 16u)
          {
-@@ -1858,6 +1877,85 @@ uint32_t PS2Memory::mfifoWrap(uint32_t address)
+@@ -1858,6 +1877,101 @@ uint32_t PS2Memory::mfifoWrap(uint32_t address)
      return rbor + (address & rbsr);
  }
  
@@ -102,8 +102,24 @@ index 1854be1..4ea5e73 100644
 +    }
 +}
 +
-+void ps2DmaTagTraceDump()
++void ps2DmaTagTraceDump(const uint8_t *rdram)
 +{
++    uint32_t lastStartTadr = 0u; // the raw ring around the last VIF1 start's TADR (compare with a PCSX2 ring dump)
++    for (unsigned k = 0u; k < 4096u; ++k)
++    {
++        const DmaTagTraceEntry &e = g_dmaTagTrace[(g_dmaTagTraceNext + k) % 4096u];
++        if (e.path == 'S')
++            lastStartTadr = e.tagAddr;
++    }
++    if (rdram && lastStartTadr >= 0x200u)
++        for (uint32_t a = lastStartTadr - 0x100u; a < lastStartTadr + 0x200u; a += 16u)
++        {
++            uint64_t lo = 0, hi = 0;
++            std::memcpy(&lo, rdram + (a & (PS2_RAM_SIZE - 1u)), 8);
++            std::memcpy(&hi, rdram + ((a + 8u) & (PS2_RAM_SIZE - 1u)), 8);
++            std::fprintf(stderr, "[vif1-bad]   ring %08x: %016llx %016llx\n", a, static_cast<unsigned long long>(lo),
++                         static_cast<unsigned long long>(hi));
++        }
 +    unsigned first = 0u; // from 40 events before the last drain that reached END / REFE
 +    for (unsigned k = 0u; k < 4096u; ++k)
 +    {
@@ -162,7 +178,7 @@ index 1854be1..4ea5e73 100644
  void PS2Memory::drainMfifo()
  {
      const uint32_t channel = mfifoDrainChannel();
-@@ -1930,6 +2028,8 @@ void PS2Memory::drainMfifo()
+@@ -1930,6 +2044,8 @@ void PS2Memory::drainMfifo()
              break; // packet only partly written: wait for the rest
  
          lastTagUpper = static_cast<uint32_t>((tag >> 16) & 0xFFFFu);
@@ -171,7 +187,7 @@ index 1854be1..4ea5e73 100644
          if (transferTag)
              out.insert(out.end(), tp + 8u, tp + 16u);
  
-@@ -1992,6 +2092,10 @@ void PS2Memory::drainMfifo()
+@@ -1992,6 +2108,10 @@ void PS2Memory::drainMfifo()
          completeDmacChannel(channel, isVif ? 1u : 2u);
      }
      m_mfifoWaitingChannel = ended ? 0u : channel;
@@ -183,7 +199,7 @@ index 1854be1..4ea5e73 100644
  }
  
 diff --git a/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp b/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
-index e63ab8b..5cef1f2 100644
+index e63ab8b..d363bac 100644
 --- a/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
 +++ b/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
 @@ -1,5 +1,8 @@
@@ -231,7 +247,7 @@ index e63ab8b..5cef1f2 100644
 +    const bool g_vif1TraceOn = std::getenv("GOW_VU1N_CHECKLONG") != nullptr;
 +}
 +
-+void ps2DmaTagTraceDump();
++void ps2DmaTagTraceDump(const uint8_t *rdram);
 +
 +void ps2Vif1TraceDump()
 +{
@@ -300,7 +316,7 @@ index e63ab8b..5cef1f2 100644
 +                    const Vif1TraceEntry &e = g_vif1Trace[(g_vif1TraceNext + k) % 160u];
 +                    std::fprintf(stderr, "[vif1-bad]   cmd=%08x mode=%u pos=%x/%x\n", e.cmd, (e.stat >> 24) & 3u, e.pos, e.size);
 +                }
-+                ps2DmaTagTraceDump(); // the DMA tags that built this buffer (ps2_memory.cpp)
++                ps2DmaTagTraceDump(m_rdram); // the DMA tags that built this buffer (ps2_memory.cpp)
 +                const uint32_t from = pos >= 4u + 0x1C0u ? (pos - 4u - 0x1C0u) & ~15u : 0u;
 +                for (uint32_t o = from; o + 16u <= sizeBytes && o < pos + 32u; o += 16u)
 +                {

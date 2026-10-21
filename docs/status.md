@@ -26,7 +26,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   A fight loads and renders (Stage 1, Kazuya vs Law) but at ~7 fps: the VU1 interpreter (see "First fight").
   Native VU1 port started (stopped at the user's 95% usage report): the GoW VU1 engine is in (patch 11, 465/465
   tests), no native blocks generated yet (see "Native VU1 port").
-- **Resume at: "Native VU1 port", "Cause traced" -> Next (PCSX2 ring read at 0x13d350, then the drainMfifo fix).**
+- **Resume at: "Native VU1 port", "Root cause found one level up" (the game's CNT qwc=4; Grok cnt-qwc result).**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
@@ -577,6 +577,17 @@ Progress (2026-10-21, commits a31b778, fda9e02):
   mfifoVIF1transfer streams a tag's data as it arrives instead of waiting for the whole packet like our drainMfifo).
   Next: read ring 0x13d300-0x13d4a0 in PCSX2 (tools/pine.py) at the same point of the fight and compare; then fix
   drainMfifo (stream partial CNT/NEXT data, see PCSX2 Vif1_MFIFO.cpp) or the SPR packet source.
+- **Root cause found one level up (2026-10-21, PCSX2 ring dump):** the "REF qwc=0 / REFE" that ended the list are UNPACK
+  data, not tags. The game's own packet is wrong in our run: `CNT qwc=4` with `DIRECT 2` in its tag-hi (2 qwords of GIF
+  data: TEXFLUSH) also counts the next two REF texture-upload tags (`REF qwc=0x26 addr=0x6c2220` FLUSHE;DIRECTHL,
+  `REF qwc=0xa addr=0x6c2480`), so our drain sends those tags to the VIF as data and loses its place; the matrix packet
+  `CNT qwc=0x17` (FLUSH;MSCAL 0x2b; STCYCL; UNPACK V4-32 num=0x15) is then read as data, its UNPACK data as tags.
+  PCSX2 (logs/pcsx2_ring_probe/ring_70.bin, 11 s into the fight, past our stall) has the same packet kind as
+  `CNT qwc=2` (FLUSH;DIRECT 2) followed by real REF tags. So the EE-side builder put the texture-upload REFs inside an
+  open CNT and counted them; hypothesis: the texture-upload writer runs at a moment hardware never allows (an
+  interrupt / DMA callback our runtime runs earlier, since our DMAs complete inside the CHCR store). Grok task
+  "cnt-qwc" (logs/grok/cnt-qwc_*.json) is finding the writer functions. Our ring dump: logs/ringdump_fight1/stderr.txt
+  ("[vif1-bad]   ring"); the debug patch now prints it.
 - **Patch 12** (`patches/12-ps2xRuntime-vif1-carry-and-mfifo-wait.patch`, tests 466/466): (a) a VIF1 command whose
   payload runs past the end of a DMA transfer (UNPACK / MPG / STROW / STCOL / STMASK) is kept and finished with the next
   transfer, like PCSX2 (before: the rest was parsed as VIF codes; Tekken does this when a drain ends mid-command); (b) a

@@ -1,5 +1,5 @@
 # handoff (Claude -> Grok while Claude is out of usage; AI-facing, dense)
-Run: `powershell -File tools\grok_lead.ps1` (steps below, in order; stops at the first step whose JSON has contra[],
+Run: `powershell -File tools\grok_start.ps1 -Name lead -Mode lead` (detached driver) (steps below, in order; stops at the first step whose JSON has contra[],
 fails to parse, or a work step that changes no owned file). Journal: logs\grok\lead_journal.json.
 Base state: origin/master + external/PS2Recomp = patches 01-13 applied, clean. Every task is checkpointed on grok/wip.
 Grok never commits, pushes, opens PRs or publishes; all changes stay uncommitted for Claude to review.

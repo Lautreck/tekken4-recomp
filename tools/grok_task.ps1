@@ -22,6 +22,7 @@ param(
 # is reported to Grok, which carries on. Run it in the background for parallel work, e.g.
 #   powershell -File tools\grok_task.ps1 -Name pad2 -Mode work -Owns external/PS2Recomp/ps2xRuntime/src/lib/Kernel/Stubs/Pad.cpp -PromptFile <file>
 $root = Split-Path -Parent $PSScriptRoot
+$Owns = @($Owns | ForEach-Object { $_ -split ',' } | Where-Object { $_ })  # powershell -File joins lists with commas
 $grok = (Get-Command grok -ErrorAction SilentlyContinue).Source
 if (-not $grok) { $grok = Join-Path $env:USERPROFILE ".grok\bin\grok.exe" }
 if (-not (Test-Path $grok)) { "grok not found (install Grok Build: irm https://x.ai/cli/install.ps1 | iex)"; exit 1 }

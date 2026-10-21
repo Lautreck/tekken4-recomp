@@ -19,7 +19,8 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Strip gaps fixed (patch 05, see "Sprite strip gaps").
   Vibrating picture fixed (patch 06, see "Field offset").
   After the movie (Start skips it) the first-run difficulty screen works (see "Difficulty screen").
-- **Resume at: "Next steps" #1, the dashed lines on the difficulty screen, then on to the main menu.**
+  Its dashed lines are fixed too (patch 08).
+- **Resume at: "Next steps" #1, pick MEDIUM and follow the game to its main menu (milestone 6).**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
@@ -435,9 +436,13 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
   a test). docs/img/difficulty_screen.png.
 - Tried and dropped: making a zero-size sprite draw nothing (GS behaviour). 8 upstream tests draw sprites with
   both corners on one point and expect a pixel, and it did not remove the dashed lines.
-- Still off: thin dashed lines (left/right of "SET GAME DIFFICULTY", on the MEDIUM row, a vertical one by the
-  logo, purple dashes at the bottom). Not in PCSX2. Next: GS dump of this screen (TEKKEN4_GS_DUMP ~1150 with the
-  Start key) and find which primitives draw them.
+- Thin dashed lines along the panels' edges (not in PCSX2): `tools/gif_sprites.py` (new; lists the sprites in a
+  TEKKEN4_GS_DUMP GIF log with UV, texture, CLAMP, filtering) showed the UI drawn as 64-px strips from X -0.5 to
+  63.5 over U 0..64 (Y the same way, given bottom-up). The GS samples u = u0 + (x - X0) * du/dx = x + 0.5 (texel
+  x); DrawSprite added half a pixel more, so it read texel x+1 and, at each image's right/bottom edge, the GS
+  memory beside the image. **Patch 08** takes UV at the pixel position and keeps FST UV fractions (they were
+  >> 4). Integer-aligned point sampling is unchanged; PR #377 third commit + test, 448/448. The screen now
+  matches PCSX2 (docs/img/difficulty_screen.png).
 
 ## Publishing (from 2026-10-21)
 The user pre-authorized publishing every successful milestone on three channels:
@@ -459,7 +464,7 @@ The user pre-authorized publishing every successful milestone on three channels:
 - PR #376 https://github.com/ran-j/PS2Recomp/pull/376 = patch 04 + a test, sceMpegCreate clears mp->sys word 0
   (branch `mpeg-create-clears-end`, commit ccaa06f, worktree `external/ps2recomp-pr4`, 446/446).
 - PR #375 also carries patch 06 (second commit d9141f2, field offset; title and description updated, 447/447).
-- PR #377 https://github.com/ran-j/PS2Recomp/pull/377 = patches 05 + 07 with tests (two commits) (two strips 0..63.5 and 64..127.5),
+- PR #377 https://github.com/ran-j/PS2Recomp/pull/377 = patches 05 + 07 + 08 with tests (three commits) (two strips 0..63.5 and 64..127.5),
   branch `sprite-edge-coverage`, worktree `external/ps2recomp-pr5`, 446/446. The test is only in the PR branch.
 - Not published yet: the intro movie (no milestone page; publish with milestone 6, the title screen).
 - **Milestone pages** (private until the user shares them from the page's Share menu): milestone 4 at
@@ -467,8 +472,7 @@ The user pre-authorized publishing every successful milestone on three channels:
   https://claude.ai/artifact/CoN3nkpepFjyn5LSbPEQ7j (menu, PAL60 confirmation, Namco logo; four fixes).
 
 ## Next steps
-1. Dashed lines on the difficulty screen (see "Difficulty screen"), then pick MEDIUM (Cross) and follow the game
-   to its main menu vs PCSX2. Reaching the main menu = milestone 6: publish its page (movie, display fixes).
+1. Pick MEDIUM (Cross) on the difficulty screen and follow the game to its main menu vs PCSX2. Reaching the main menu = milestone 6: publish its page (movie, display fixes).
 2. Frame pacing: 38-47 vs 50/60 fps. The loop busy-waits on `RCNT0_COUNT >= 0x724` and on vsync.
 3. Sound for real (milestone 8): find how the game loads its IOP modules (sceSifRebootIop with
    IOPRP243.IMG, then module buffers probably from DATA.BIN), extract the sound IRX and run it on ps2xIOP's

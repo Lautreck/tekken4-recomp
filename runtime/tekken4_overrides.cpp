@@ -8,6 +8,7 @@
 #include "runtime/ps2_memory.h"
 #include "runtime/gs/gs_frontend.h"
 #include "Stubs/CD.h"
+#include "Stubs/MPEG.h"
 #include <ps2_recompiled_functions.h>
 
 #ifdef _WIN32
@@ -738,6 +739,82 @@ namespace tekken4
 
     uint64_t g_movieBytesFed = 0u;
 
+    // Animated IPU images (the character select's background, the attract loop). FUN_002277d0 sets up one job per
+    // image of an image file at 0x1ccd200 (0x54 bytes each: +0x2c/+0x30 size in macroblocks, +0x38 RGB32 output,
+    // +0x3c frame table, +0x40 position, +0x44 frames << 8, +0x48 speed, +0x4c/+0x50 current frame data and size).
+    // Every frame FUN_00227be8(step) advances each animation and has the IPU decode the current frames (FDEC the
+    // flags byte, IDEC through toIPU/fromIPU DMA; the channel-3 handler 0x227cf8 starts the next image), and
+    // FUN_00227eb0 spins until 0x1ccd18c reaches -1. The runtime has no IPU: decode the frames here instead.
+    constexpr uint32_t kIpuImagesDecode = 0x00227be8u;
+    constexpr uint32_t kIpuJobs = 0x01ccd200u;
+    constexpr uint32_t kIpuJobSize = 0x54u;
+    constexpr uint32_t kIpuActive = 0x01ccd184u;
+    constexpr uint32_t kIpuCount = 0x01ccd188u;
+    constexpr uint32_t kIpuPending = 0x01ccd18cu;
+    constexpr uint32_t kIpuStage = 0x01ccd198u;
+    constexpr uint32_t kIpuFormat = 0x01ccd1acu; // 0 RGB32, 1 RGB16, 2 RGB16 dithered (IDEC OFM/DTE)
+
+    int32_t guest32(const uint8_t *rdram, uint32_t addr)
+    {
+        int32_t value = 0;
+        std::memcpy(&value, rdram + (addr & 0x01FFFFFCu), 4);
+        return value;
+    }
+
+    void setGuest32(uint8_t *rdram, uint32_t addr, int32_t value)
+    {
+        std::memcpy(rdram + (addr & 0x01FFFFFCu), &value, 4);
+    }
+
+    // value / 256 rounding toward zero, as the game's code does it.
+    int32_t div256(int32_t value)
+    {
+        return (value < 0 ? value + 0xFF : value) >> 8;
+    }
+
+    void ipuImagesDecode(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        (void)runtime;
+        ctx->pc = getRegU32(ctx, 31);
+        if (guest32(rdram, kIpuActive) == 0)
+            return;
+        const int32_t step = static_cast<int32_t>(getRegU32(ctx, 4));
+        const int32_t count = guest32(rdram, kIpuCount);
+        const int32_t format = guest32(rdram, kIpuFormat);
+        static int failuresLogged = 0;
+        for (int32_t i = 0; i < count; ++i)
+        {
+            const uint32_t job = kIpuJobs + static_cast<uint32_t>(i) * kIpuJobSize;
+            int32_t position = guest32(rdram, job + 0x40u) + div256(guest32(rdram, job + 0x48u) * step);
+            if (guest32(rdram, job + 0x44u) <= position)
+                position = 0;
+            setGuest32(rdram, job + 0x40u, position);
+            const uint32_t table = static_cast<uint32_t>(guest32(rdram, job + 0x3cu));
+            const uint32_t entry = static_cast<uint32_t>(div256(position) * 8) + table;
+            const uint32_t data = table + static_cast<uint32_t>(guest32(rdram, entry + 4u));
+            const uint32_t size = static_cast<uint32_t>(guest32(rdram, entry + 8u));
+            setGuest32(rdram, job + 0x4cu, static_cast<int32_t>(data));
+            setGuest32(rdram, job + 0x50u, static_cast<int32_t>(size));
+
+            const uint32_t mbWidth = static_cast<uint32_t>(guest32(rdram, job + 0x2cu));
+            const uint32_t mbHeight = static_cast<uint32_t>(guest32(rdram, job + 0x30u));
+            const uint32_t out = static_cast<uint32_t>(guest32(rdram, job + 0x38u)) & 0x01FFFFFFu;
+            const uint64_t outBytes = static_cast<uint64_t>(mbWidth) * mbHeight * 1024u;
+            const uint32_t in = data & 0x01FFFFFFu;
+            bool decoded = false;
+            if (format == 0 && in + static_cast<uint64_t>(size) <= PS2_RAM_SIZE && out + outBytes <= PS2_RAM_SIZE)
+                decoded = ps2_stubs::decodeIpuIntraPicture(rdram + in, size, mbWidth, mbHeight, rdram + out);
+            if (!decoded && failuresLogged < 8)
+            {
+                ++failuresLogged;
+                RUNTIME_LOG("[tekken4] IPU image " << i << " frame " << div256(position) << " (" << mbWidth << "x" << mbHeight
+                                                   << " macroblocks, format " << format << ") not decoded\n");
+            }
+        }
+        setGuest32(rdram, kIpuStage, 0);
+        setGuest32(rdram, kIpuPending, -1); // all decoded: FUN_00227eb0 returns at once
+    }
+
     void mpegGetPicture(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         ctx->pc = getRegU32(ctx, 31);
@@ -795,6 +872,7 @@ namespace tekken4
     {
         runtime.registerFunction(0x00292900u, closeDmaTag);
         runtime.registerFunction(kSceMpegGetPicture, mpegGetPicture);
+        runtime.registerFunction(kIpuImagesDecode, ipuImagesDecode);
         if (const char *presentLog = std::getenv("TEKKEN4_PRESENT_LOG"))
         {
             // Debug aid for a shaking picture: for <seconds>, samples the presented frame every 5 ms and logs each

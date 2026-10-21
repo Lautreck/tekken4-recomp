@@ -22,7 +22,8 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Its dashed lines are fixed too (patch 08).
   **Milestone 6 reached:** Cross on MEDIUM opens the main menu (MODE SELECT: STORY BATTLE .. OPTIONS), as in PCSX2.
   Frame rate fixed: 60 fps on every screen so far (patch 09, see "GS speed").
-- **Resume at: "Next steps" #1 (milestone 7: a fight).**
+  Character select works (IPU images decoded through FFmpeg, see "Character select").
+- **Resume at: "Next steps" #1 (milestone 7: pick a fighter, then the stage).**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
@@ -477,6 +478,28 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
 - All of it is patch 09 (not upstreamed yet: it builds on PR #377's DrawSprite). The movie plays at 30 fps (the
   player shows a picture every second vsync), every other screen at 60.
 
+## Character select (session 3, 2026-10-21)
+- The stall after Arcade (and in the attract loop): game thread in FUN_00227eb0 (0x227eb8), spinning until
+  0x1ccd18c reaches -1. The game decodes animated images with the IPU itself: FUN_002277d0 makes one job per image
+  of an image file (resource 0x77, or 0x8a in mode 6) at 0x1ccd200 (0x54 bytes each), FUN_00227be8(step) advances
+  each animation every frame and starts the decodes (FUN_002278f0: FDEC 8 bits = IPU_CTRL flags, IDEC to RGB32 via
+  toIPU/fromIPU DMA), the channel-3 DMA handler 0x227cf8 starts the next image and counts 0x1ccd18c down. The
+  runtime has no IPU, so the count never moved.
+- PCSX2 at the select screen (PINE, logs/pcsx2_ipu_probe): one image, 15x11 macroblocks (240x176, the cloud
+  background), 75 frames, output RGB32 at 0xf4a380. Image file: count, (offset, size) per image; image: u16 mb
+  width, height, frames, speed, 4 x 0; then a frame table (offset, size). Each frame is the IPU flags byte (0x60:
+  MPEG-2 intra VLC, non-linear quantiser), the macroblocks, 00 00 01 B0, 00 00 01 B1: FFmpeg's "ipu" format.
+  Some frames have a stuffing byte before B0 that FFmpeg rejects (it wants exactly the end code after the
+  picture).
+- **Patch 10** (runtime, MPEG.cpp): `ps2_stubs::decodeIpuIntraPicture(data, size, mbw, mbh, out)` decodes one
+  IPU intra picture with FFmpeg's ipu codec (retrying with up to 8 stuffing bytes dropped) and writes the IPU's
+  RGB32 output (16x16 macroblocks in raster order, the IPU's fixed-point BT.601 conversion, alpha 0x80).
+  **Override:** FUN_00227be8 replaced: same animation step, then the current frame of each image decoded at once
+  and 0x1ccd18c set to -1. Formats 1/2 (RGB16, dithered) are not handled yet (logged).
+- Result: CHOOSE YOUR FIGHTER as in PCSX2 (docs/img/character_select.png): animated clouds, Kazuya's portrait,
+  the grid, the countdown. Ours shows PRESS P2 START where PCSX2 has CREDIT 0 (pad 2 reported as connected, the
+  same as VS BATTLE being enabled). The countdown went 24 -> 19 in 7 s, so check the frame rate here.
+
 ## Publishing (from 2026-10-21)
 The user pre-authorized publishing every successful milestone on three channels:
 - **Project repo (public):** https://github.com/Lautreck/tekken4-recomp (`origin`, branch `master`). Commits use
@@ -507,15 +530,9 @@ The user pre-authorized publishing every successful milestone on three channels:
 
 ## Next steps
 1. Upstream patch 09 (GS speed + drawing threads) once PR #377 is in, as a follow-up PR.
-2. Milestone 7, a fight: ARCADE (Down, Cross), character select, then the stage. Compare with PCSX2 at each step.
-   First stop found: after Arcade (keys ...,"36:Cross","40:Down","41.5:Cross"), PCSX2 shows CHOOSE YOUR FIGHTER
-   (logs/pcsx2_arcade); ours loads the select screen's files (disc reads at sectors 1043812-1044716, one mode-6
-   read of 29824 bytes to IOP 0x12b090 skipped) and then shows only black (logs/arcade1). Check first whether the
-   main loop still runs (TEKKEN4_PRESENT_LOG / frame log), then what the select screen waits for or draws.
-   Also: pad 2 reported as connected (VS BATTLE enabled). At 60 fps the main menu's idle timeout comes ~44 s
-   into a run, and the attract loop (it reloads the files read before the intro movie) stops at the same place
-   as the select screen: game thread at PC 0x227eb8, RA 0x1feedc, no more frames (logs/mt1). One cause, two
-   symptoms: look at 0x227eb8 first.
+2. Milestone 7, a fight: the character select works (see "Character select"). Next: frame rate on that screen,
+   then pick a fighter (Cross) and follow the game into the stage vs PCSX2. Also: pad 2 is reported as connected
+   (VS BATTLE enabled, PRESS P2 START instead of CREDIT 0).
 3. Sound for real (milestone 8): find how the game loads its IOP modules (sceSifRebootIop with
    IOPRP243.IMG, then module buffers probably from DATA.BIN), extract the sound IRX and run it on ps2xIOP's
    emulated IOP. Then the override's sound part goes away.

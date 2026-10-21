@@ -20,7 +20,8 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Vibrating picture fixed (patch 06, see "Field offset").
   After the movie (Start skips it) the first-run difficulty screen works (see "Difficulty screen").
   Its dashed lines are fixed too (patch 08).
-- **Resume at: "Next steps" #1, pick MEDIUM and follow the game to its main menu (milestone 6).**
+  **Milestone 6 reached:** Cross on MEDIUM opens the main menu (MODE SELECT: STORY BATTLE .. OPTIONS), as in PCSX2.
+- **Resume at: "Next steps" #1 (milestone 7: a fight).**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
@@ -39,7 +40,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
 - [x] 4. Boots past startup without crashing (main loop runs at ~47 fps, 2026-10-21)
 - [x] 5. Something on screen (Namco logo / first menu) (2026-10-21: the display-mode menu renders, PAL60 picked
       as controller 1, confirmation answered, Namco logo shows; vertical scaling still off)
-- [ ] 6. Menus and controller input
+- [x] 6. Menus and controller input (2026-10-21: boot -> PAL60 -> movie -> difficulty -> main menu, matching PCSX2)
 - [ ] 7. A fight: two characters on a stage, correct rendering, steady frame rate
 - [ ] 8. Sound, saves, PC features
 
@@ -444,6 +445,14 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
   >> 4). Integer-aligned point sampling is unchanged; PR #377 third commit + test, 448/448. The screen now
   matches PCSX2 (docs/img/difficulty_screen.png).
 
+## Main menu = milestone 6 (session 3, 2026-10-21)
+- Input: `run_capture.ps1 -Keys "10:Down","12:Cross","15:Left","16.5:Cross","30:Start","36:Cross"` (PCSX2:
+  12/14/16/17/30/36). Both show MODE SELECT with STORY BATTLE selected, the character portrait and the help text
+  (docs/img/m6_main_menu.png; PCSX2 logs/pcsx2_menu, German).
+- Differences: VS BATTLE is greyed out in PCSX2 (only pad 1 plugged in) but enabled in ours, so the runtime
+  probably reports pad 2 as connected. At 55 s PCSX2 has gone to the attract demo (VS screen); ours is still on
+  the menu (its idle timer likely counts frames and we run at ~36 fps).
+
 ## Publishing (from 2026-10-21)
 The user pre-authorized publishing every successful milestone on three channels:
 - **Project repo (public):** https://github.com/Lautreck/tekken4-recomp (`origin`, branch `master`). Commits use
@@ -472,7 +481,8 @@ The user pre-authorized publishing every successful milestone on three channels:
   https://claude.ai/artifact/CoN3nkpepFjyn5LSbPEQ7j (menu, PAL60 confirmation, Namco logo; four fixes).
 
 ## Next steps
-1. Pick MEDIUM (Cross) on the difficulty screen and follow the game to its main menu vs PCSX2. Reaching the main menu = milestone 6: publish its page (movie, display fixes).
+1. Milestone 7, a fight: ARCADE (Down, Cross), character select, then the stage. Compare with PCSX2 at each step.
+   Also: pad 2 reported as connected (VS BATTLE enabled), attract demo timing. Reaching the main menu = milestone 6: publish its page (movie, display fixes).
 2. Frame pacing: 38-47 vs 50/60 fps. The loop busy-waits on `RCNT0_COUNT >= 0x724` and on vsync.
 3. Sound for real (milestone 8): find how the game loads its IOP modules (sceSifRebootIop with
    IOPRP243.IMG, then module buffers probably from DATA.BIN), extract the sound IRX and run it on ps2xIOP's

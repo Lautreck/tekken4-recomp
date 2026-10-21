@@ -10,9 +10,14 @@ call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" >nul
 if errorlevel 1 exit /b 1
 set "PATH=%ProgramFiles%\CMake\bin;%LOCALAPPDATA%\Microsoft\WinGet\Links;%PATH%"
 set "SRC=%~dp0..\external\PS2Recomp"
-rem Our runtime patches (patches\*.patch, against the pinned PS2Recomp commit); already-applied ones are skipped.
+rem Our runtime patches (patches\*.patch, against the pinned PS2Recomp commit, applied in name order). They stack,
+rem so when the last one is already in the tree they all are (an earlier one alone may not reverse any more, its
+rem context changed by a later one); otherwise already-applied ones are skipped.
 set "PATCHFAIL="
-for %%P in ("%~dp0..\patches\*.patch") do call :apply "%%~fP"
+set "LASTPATCH="
+for %%P in ("%~dp0..\patches\*.patch") do set "LASTPATCH=%%~fP"
+git -C "%SRC%" apply --reverse --check "%LASTPATCH%" >nul 2>&1
+if errorlevel 1 for %%P in ("%~dp0..\patches\*.patch") do call :apply "%%~fP"
 if defined PATCHFAIL exit /b 1
 cmake -S "%SRC%" -B "%SRC%\out\runtime" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
   -DPS2X_BUILD_RECOMP=OFF -DPS2X_BUILD_ANALYZER=OFF -DPS2X_BUILD_TEST=OFF -DPS2X_BUILD_STUDIO=OFF ^

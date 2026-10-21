@@ -1,4 +1,6 @@
-param([string]$Handoff = "", [int]$MaxSteps = 8, [string]$Effort = "high")
+param([string]$Handoff = "", [int]$MaxSteps = 8, [string]$Effort = "high", [string]$WaitFor = "")
+# -WaitFor <task>: first wait until that running Grok task (its grok.exe) has finished. Start it detached so it
+# outlives Claude's session: Start-Process powershell -ArgumentList "-NoProfile -File tools\grok_lead.ps1 -WaitFor x" -WindowStyle Hidden
 # Runs the steps of docs/ai/handoff.md through tools\grok_task.ps1 while Claude is unavailable (usage limit), one at a
 # time, and stops at the first step that fails: no parsed JSON, a non-empty contra[], or files changed outside the
 # step's Owns. Grok never commits; every change stays in the working tree for Claude to review, keep or restore.
@@ -7,6 +9,7 @@ param([string]$Handoff = "", [int]$MaxSteps = 8, [string]$Effort = "high")
 #   ### STEP <name> | <ask|work> | <owned file>, <owned file>
 #   <the prompt: TASK / CTX / FACTS / ASK / LIMITS / DOD blocks>
 $root = Split-Path -Parent $PSScriptRoot
+if ($WaitFor) { while (Get-CimInstance Win32_Process -Filter "Name = 'grok.exe'" | Where-Object { $_.CommandLine -match [regex]::Escape("logs\grok\$WaitFor" + "_") }) { Start-Sleep -Seconds 30 } }
 if (-not $Handoff) { $Handoff = Join-Path $root "docs\ai\handoff.md" }
 if (-not (Test-Path $Handoff)) { "no handoff file: $Handoff"; exit 1 }
 $text = Get-Content -Raw -Encoding UTF8 $Handoff

@@ -608,7 +608,11 @@ is not personal (never the disc files, ISO or BIOS). Heavy analysis / coding job
   tree, so an owned file Grok is mid-way through editing also lands in Claude's next build.
 - Findings so far: the pad-2 bug is `scePadGetState` (external/PS2Recomp/.../Kernel/Stubs/Pad.cpp:453) returning
   "stable" for any opened port without checking that a pad is connected, so port 2 looks plugged in (PRESS P2 START,
-  VS BATTLE). Fix next: report port 2 disconnected unless a second host pad exists (generic, a PS2Recomp patch).
+  VS BATTLE). **Fixed by Grok = patch 13** (`patches/13-ps2xRuntime-pad-empty-port-disconnected.patch`, Pad.cpp only):
+  port 0 = keyboard + first host gamepad as before; port 1+ connected only with another host gamepad; an empty open
+  port reads scePadStateDiscon, scePadRead returns 0 (data 0xFF), info/req calls 0. Verified (logs/grok/pad2-fix-notes.md):
+  VS BATTLE greyed and skipped by the cursor, character select CREDIT 0 like PCSX2; tests 466/466. Not run with a
+  second physical gamepad.
 - Grok "vu1-vi12" (cut off by a refused write before the modes above, partial): vi12 is used as the count mask once
   (0x3390) and then overwritten inside the same program, so the mask at the next start of 0x32a0 is whatever an
   earlier run left. Rerun it with the new ask mode.

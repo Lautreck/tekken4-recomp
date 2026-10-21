@@ -30,7 +30,8 @@ if (-not $Prompt) { "no prompt (-Prompt or -PromptFile)"; exit 1 }
 if ($Mode -eq "work" -and $Owns.Count -eq 0) { "work mode needs -Owns <files the task may modify>"; exit 1 }
 # Grok does not load the project's CLAUDE.md until the project is trusted, so the rules come with every task.
 $rules = "PROJECT: Tekken 4 PS2 PAL SCES-50878 static recomp (PS2Recomp). PEER: Claude works on other files now. FIRST: read " +
-    "CLAUDE.md (rules, obey) + docs/status.md (state). NEVER: commit/publish game files, Ghidra DBs, VU1 micro memories, " +
+    "docs/ai/grok-brief.md (dense map, commands, facts, protocol A1-A6: obey) + CLAUDE.md; docs/status.md only the section " +
+    "the task names. NEVER: commit/publish game files, Ghidra DBs, VU1 micro memories, " +
     "generated C++; send disc/ISO/BIOS anywhere; git commands that change a repo (Claude commits). TRUTH: PCSX2 behaviour. " +
     "PY: python -I. SCRATCH: logs/grok/. OUTPUT: read by an AI, not a human: max density, no narration, no pleasantries, " +
     "no markdown; only the final JSON object counts (interim turns discarded); every fact needs ref (file:line | addr | " +

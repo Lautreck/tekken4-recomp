@@ -18,7 +18,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   The intro movie now plays (see "Intro movie").
   Strip gaps fixed (patch 05, see "Sprite strip gaps").
   Vibrating picture fixed (patch 06, see "Field offset").
-- **Resume at: "Next steps" #1, upstream patches 05/06, then the title screen after the movie.**
+- **Resume at: "Next steps" #1, the title screen after the movie (compare with PCSX2).**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
@@ -444,21 +444,23 @@ The user pre-authorized publishing every successful milestone on three channels:
   commit d030383, worktree `external/ps2recomp-pr3`, 446/446).
 - PR #376 https://github.com/ran-j/PS2Recomp/pull/376 = patch 04 + a test, sceMpegCreate clears mp->sys word 0
   (branch `mpeg-create-clears-end`, commit ccaa06f, worktree `external/ps2recomp-pr4`, 446/446).
+- PR #375 also carries patch 06 (second commit d9141f2, field offset; title and description updated, 447/447).
+- PR #377 https://github.com/ran-j/PS2Recomp/pull/377 = patch 05 + a test (two strips 0..63.5 and 64..127.5),
+  branch `sprite-edge-coverage`, worktree `external/ps2recomp-pr5`, 446/446. The test is only in the PR branch.
 - Not published yet: the intro movie (no milestone page; publish with milestone 6, the title screen).
 - **Milestone pages** (private until the user shares them from the page's Share menu): milestone 4 at
   https://claude.ai/artifact/BTDUfBQqwaDsn83wdRh2gf (our runtime screenshot next to PCSX2's), milestone 5 at
   https://claude.ai/artifact/CoN3nkpepFjyn5LSbPEQ7j (menu, PAL60 confirmation, Namco logo; four fixes).
 
 ## Next steps
-1. Upstream patches 05 (sprite edges, needs a test with a 63.5-wide sprite) and 06 (field offset) as PRs.
-2. After the movie: follow the game to the title screen and compare with PCSX2 (input to skip the movie: Start).
-3. Frame pacing: 38-47 vs 50/60 fps. The loop busy-waits on `RCNT0_COUNT >= 0x724` and on vsync.
-4. Sound for real (milestone 8): find how the game loads its IOP modules (sceSifRebootIop with
+1. After the movie: follow the game to the title screen and compare with PCSX2 (input to skip the movie: Start).
+2. Frame pacing: 38-47 vs 50/60 fps. The loop busy-waits on `RCNT0_COUNT >= 0x724` and on vsync.
+3. Sound for real (milestone 8): find how the game loads its IOP modules (sceSifRebootIop with
    IOPRP243.IMG, then module buffers probably from DATA.BIN), extract the sound IRX and run it on ps2xIOP's
    emulated IOP. Then the override's sound part goes away.
-5. Watch PRs #372/#373/#375/#376 and issue #374: when merged, move `external/PS2Recomp` back to upstream main and drop the
+4. Watch PRs #372/#373/#375/#376/#377 and issue #374: when merged, move `external/PS2Recomp` back to upstream main and drop the
    patch files.
-6. Re-export from Ghidra (3 late SDK renames) whenever Ghidra is next used for an export; rerun post-process.
-7. Later: export Ghidra's switch tables into `[jump_tables]` to cut the unresolved JR sites.
-8. Watch: upstream keeps its RPC server pool at guest 0x01F10000, above the game's stack top (sp starts
+5. Re-export from Ghidra (3 late SDK renames) whenever Ghidra is next used for an export; rerun post-process.
+6. Later: export Ghidra's switch tables into `[jump_tables]` to cut the unresolved JR sites.
+7. Watch: upstream keeps its RPC server pool at guest 0x01F10000, above the game's stack top (sp starts
    ~0x1f00000). If a heap ever lives there, see the GoW `GuestReservedLayout` lesson.

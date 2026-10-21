@@ -38,6 +38,8 @@ Goal (user): one seamless team, each keeps its specialisation.
   side work: builds (a Grok build waits for logs\run.lock to be free: build_runtime.cmd) and big scripts (scans of the
   ELF / DATA.BIN / generated C++ taking more than ~1 min: check logs\run.lock first, wait while it is held).
 - Ask mode cannot run the game or PCSX2 (deny rules); work mode may, holding the run lock.
+- Grok tasks are always started DETACHED (Start-Process powershell -File tools\grok_task.ps1 ... -WindowStyle Hidden) so
+  they survive a Claude session end or a terminal / PC restart; prompts live in docs/ai/prompts/ (committed).
 - Permissions are frozen at auto + deny (e20d920 + later deny additions): no mode changes on live tasks.
 
 ## WORK LOOP RULES

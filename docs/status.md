@@ -26,7 +26,12 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   A fight loads and renders (Stage 1, Kazuya vs Law) but at ~7 fps: the VU1 interpreter (see "First fight").
   Native VU1 port started (stopped at the user's 95% usage report): the GoW VU1 engine is in (patch 11, 465/465
   tests), no native blocks generated yet (see "Native VU1 port").
-- **Resume at: "Native VU1 port" -> "STALL FIXED" (next: fight camera far too close vs PCSX2; fps 7-15).**
+- **Resume at (2026-10-22 ~01:30, PC restart for an update):** two Grok tasks run DETACHED (survive the restart):
+  fight-camera (docs/ai/prompts/fight-camera.md: camera code + PCSX2 compare plan) and upstream-qwc
+  (docs/ai/prompts/upstream-qwc.md: generic PS2Recomp fix for the stub/game qwc double count). Results land in
+  logs/grok/<task>_<time>.json and on branch grok/wip (`git log --oneline master..grok/wip`); if a grok.exe is still
+  running, wait. Then: (1) fight camera too close: compare Grok's addresses in PCSX2 (tools/pine.py) vs our runtime;
+  (2) upstream PR for the qwc fix; (3) GS speed (fight is GS-bound). Stall itself is FIXED (7d30950).
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).

@@ -17,6 +17,9 @@
 - keys: PAL60 `10:Down,12:Cross` | +main menu `15:Left,16.5:Cross,30:Start,36:Cross` | +Arcade fight `40:Down,41.5:Cross,46:Cross` (fight ~49 s, stall ~105 s)
 - PCSX2 truth: `powershell -File tools\pcsx2_capture.ps1 -OutDir <d> -Keys .. -Shots ..`; RAM while it runs: `python -I tools\pine.py read32 <a>..` / `dump <a> <len> --out <f>`
 - VU1 generator: `python -I tools/vu1/vu1n_gen.py <out> game/vu1/micro --parts 6`
+- MFIFO ring: `powershell -File tools\mfifo\pcsx2_ring_probe.ps1` (PCSX2 ring+SPR dumps in the fight -> logs/pcsx2_ring_probe);
+  `python -I tools/mfifo/ring_scan.py <dump> <base hex>` (list-end patterns), `python -I tools/mfifo/ring_chain.py <ring dump>` (walk tags)
+- reviews / process: docs/ai/reviews/*.json (mutual reviews), `python -I tools/ai/session_digest.py <transcript.jsonl> <out>`
 
 ## ENV (runtime)
 TEKKEN4_PERF_LOG=<s> fps+GS ms/s | TEKKEN4_PROFILE=<start>:<s> sampled hot functions | TEKKEN4_GS_DUMP=<frame> GIF packets |

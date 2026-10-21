@@ -125,6 +125,7 @@ $tmpIndex = Join-Path $env:TEMP ("grok-wip-index-" + $stamp)
 $OutputEncoding = New-Object System.Text.UTF8Encoding $false  # no BOM in what is piped to git (the commit message)
 try {
     $files = @(@{ path = "grok-wip/" + (Split-Path -Leaf $log); file = $log })
+    $files += @{ path = "grok-wip/" + (Split-Path -Leaf $promptPath); file = $promptPath }
     Get-ChildItem $logDir -Filter "$Name*.md" -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $t0 } |
         ForEach-Object { $files += @{ path = "grok-wip/" + $_.Name; file = $_.FullName } }
     foreach ($f in $mine) {

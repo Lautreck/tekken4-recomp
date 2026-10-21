@@ -46,6 +46,13 @@ foreach ($e in Get-ChildItem -Force $root | Where-Object { $_.Name -ne ".git" -a
 }
 foreach ($c in "commit", "push", "reset", "checkout", "switch", "restore", "clean", "stash", "rebase", "merge", "apply",
     "am", "rm", "mv", "add", "tag", "branch -d", "branch -D", "worktree") { $deny += "Bash(git ${c}:*)" }
+if ($Mode -eq "ask") {
+    # Game / PCSX2 runs hold the run lock and the CPU: only work tasks (and Claude) run them.
+    foreach ($s in "tools\run_capture.ps1", "tools/run_capture.ps1", "tools\pcsx2_capture.ps1", "tools/pcsx2_capture.ps1") {
+        $deny += @("Bash(powershell -File ${s}:*)", "Bash(powershell -NoProfile -File ${s}:*)", "Bash(& ${s}:*)")
+    }
+    $deny += @("Bash(python -I tools\pine.py:*)", "Bash(python -I tools/pine.py:*)", "Bash(cmd /c tools\run_game.cmd:*)")
+}
 if ($Mode -eq "work") {
     $rules += " MODE: work. EDIT ONLY: " + ($Owns -join ", ") + " (+ logs/grok/). BUILD: cmd /c tools\build_runtime.cmd " +
         "(TEKKEN4_BUILD_DIR=grok set -> external\PS2Recomp\out\grok). RUN: powershell -File tools\run_capture.ps1 -RunDir " +
@@ -59,9 +66,10 @@ $schema = '{"type":"object","properties":{' +
     '"verdict":{"type":"string"},"conf":{"type":"number"},' +
     '"facts":{"type":"array","items":{"type":"object","properties":{"c":{"type":"string"},"ref":{"type":"string"},"v":{"type":"boolean"}},"required":["c","ref","v"]}},' +
     '"fix":{"type":"array","items":{"type":"object","properties":{"where":{"type":"string"},"change":{"type":"string"}},"required":["where","change"]}},' +
+    '"contra":{"type":"array","items":{"type":"string"}},' +
     '"checks":{"type":"array","items":{"type":"string"}},"open":{"type":"array","items":{"type":"string"}},' +
     '"files_changed":{"type":"array","items":{"type":"string"}}},' +
-    '"required":["verdict","conf","facts","fix","checks","open","files_changed"]}'
+    '"required":["verdict","conf","facts","fix","contra","checks","open","files_changed"]}'
 # Prompt via a file and \" in the schema: Windows PowerShell mangles double quotes inside native-command arguments.
 $logDir = Join-Path $root "logs\grok"
 New-Item -ItemType Directory -Force $logDir | Out-Null
@@ -97,8 +105,13 @@ foreach ($r in $repos) {
     $rel = if ($r -eq $root) { "" } else { "external/PS2Recomp/" }
     $changed += @(git -C $r status --short 2>$null | Where-Object { $before[$r] -notcontains $_ } | ForEach-Object { $rel + $_.Substring(3) })
 }
+# Grok's changes = its -Owns files; anything else that changed meanwhile is most likely Claude's own work.
+$ownsNorm = @($Owns | ForEach-Object { $_ -replace '\\', '/' })
+$mine = @($changed | Where-Object { $ownsNorm -contains $_ })
+$other = @($changed | Where-Object { $ownsNorm -notcontains $_ })
 $result = [ordered]@{
-    task = $Name; mode = $Mode; answer = $(if ($answer) { $answer } else { $raw }); files_changed = $changed
+    task = $Name; mode = $Mode; answer = $(if ($answer) { $answer } else { $raw }); files_changed = $mine
+    other_tree_changes = $other
     turns = $(if ($meta) { $meta.num_turns }); cost_usd = $(if ($meta) { $meta.total_cost_usd })
     seconds = [int]((Get-Date) - $t0).TotalSeconds; session = $(if ($meta) { $meta.sessionId })
 }

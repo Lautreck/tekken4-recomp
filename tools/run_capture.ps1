@@ -33,6 +33,8 @@ function Send-Key([IntPtr]$h, [int]$vkCode, [int]$scanCode, [bool]$extended, [in
     [void][RunCaptureWin]::PostMessage($h, 0x0101, [IntPtr]$vkCode, [IntPtr]($flags -bor [int64]0xC0000000))
 }
 New-Item -ItemType Directory -Force $RunDir | Out-Null
+. (Join-Path $PSScriptRoot "run_lock.ps1")
+Enter-RunLock $root "run_capture $RunDir"
 $buildDir = if ($env:TEKKEN4_BUILD_DIR) { $env:TEKKEN4_BUILD_DIR } else { "runtime" }  # Grok: out\grok
 $exe = Join-Path $root "external\PS2Recomp\out\$buildDir\ps2xRuntime\ps2EntryRunner.exe"
 $elf = Join-Path $root "game\disc\SCES_508.78"
@@ -70,4 +72,5 @@ if (-not $p.HasExited) {
     $null = $p.CloseMainWindow()
     if (-not $p.WaitForExit(8000)) { "did not close, killing"; $p.Kill(); $null = $p.WaitForExit(5000) }
 }
+Exit-RunLock $root
 "ran {0:N1} s, output in $RunDir" -f ((Get-Date) - $t0).TotalSeconds

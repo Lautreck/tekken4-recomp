@@ -606,6 +606,11 @@ is not personal (never the disc files, ISO or BIOS). Heavy analysis / coding job
     commits. Claude keeps off the owned files meanwhile, reviews the diff and commits.
 - The build/run scripts take `TEKKEN4_BUILD_DIR` (default `runtime`). Both builds compile the same PS2Recomp source
   tree, so an owned file Grok is mid-way through editing also lands in Claude's next build.
+- **Mutual review (2026-10-21):** Claude reviewed Grok (logs/grok/review_claude_on_grok.json), Grok reviewed Claude
+  (logs/grok/review-claude_20261021_215022.json, 25 facts with refs, 24 rules). Result: docs/ai/collaboration.md (roles,
+  handoff, verification, run lock, limits, disagreement) + docs/ai/grok-brief.md (what Grok reads first). Wrapper: JSON
+  answers with contra[], ask mode cannot start the game/PCSX2/pine, files_changed only the -Owns files, tools\grok_stop.ps1
+  kills a task's grok.exe; run scripts share logsun.lock (toolsun_lock.ps1).
 - Findings so far: the pad-2 bug is `scePadGetState` (external/PS2Recomp/.../Kernel/Stubs/Pad.cpp:453) returning
   "stable" for any opened port without checking that a pad is connected, so port 2 looks plugged in (PRESS P2 START,
   VS BATTLE). **Fixed by Grok = patch 13** (`patches/13-ps2xRuntime-pad-empty-port-disconnected.patch`, Pad.cpp only):

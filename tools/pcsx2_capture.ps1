@@ -1,4 +1,7 @@
-param([string]$OutDir = "", [int[]]$Shots = @(20), [string[]]$Keys = @(), [string]$Pcsx2 = "")
+param([string]$OutDir = "", [string[]]$Shots = @("20"), [string[]]$Keys = @(), [string]$Pcsx2 = "")
+# powershell -File passes a list like 9,20 or "10:Down","12:Cross" as one comma-joined string: split it here.
+$Shots = @($Shots | ForEach-Object { $_ -split ',' } | Where-Object { $_ } | ForEach-Object { [double]$_ })
+$Keys = @($Keys | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 # Ground truth: boots the Tekken 4 ISO in PCSX2, presses pad buttons at given times, saves captures of its game
 # window at the given second marks, then stops PCSX2. Output: pcsx2_NNs.png in $OutDir (default logs\pcsx2_<time>).
 # Default PCSX2: the portable 2.8.2 in external\pcsx2 (inis\PCSX2.ini: user's PAL BIOS, PINE on, pad 1 on the
@@ -75,6 +78,8 @@ function Get-GsWindow($proc) {
     return $best
 }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
+. (Join-Path $PSScriptRoot "run_lock.ps1")
+Enter-RunLock $root "pcsx2_capture $OutDir"
 $events = @($Shots | ForEach-Object { [pscustomobject]@{ t = [double]$_; kind = "shot"; key = "" } })
 foreach ($k in $Keys) { $t, $name = $k -split ":", 2; $events += [pscustomobject]@{ t = [double]$t; kind = "key"; key = $name } }
 $events = $events | Sort-Object t
@@ -102,4 +107,5 @@ foreach ($e in $events) {
     "captured $f ($rw x $rh)"
 }
 if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+Exit-RunLock $root
 "done, output in $OutDir"

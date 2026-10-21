@@ -374,8 +374,9 @@ The user pre-authorized publishing every successful milestone on three channels:
   8e97bf7, built and tested in the worktree `external/ps2recomp-pr2`, 450/450; its `build_pr_tests.cmd` is local
   only, never commit it). Issue #374 https://github.com/ran-j/PS2Recomp/issues/374 = the pk stubs' live QWC
   doubling the count when a game's own close runs (our `closeDmaTag` override works around it).
-- **Milestone page:** milestone 4 at https://claude.ai/artifact/BTDUfBQqwaDsn83wdRh2gf (private until the user
-  shares it from the page's Share menu). Source: our runtime screenshot next to PCSX2's.
+- **Milestone pages** (private until the user shares them from the page's Share menu): milestone 4 at
+  https://claude.ai/artifact/BTDUfBQqwaDsn83wdRh2gf (our runtime screenshot next to PCSX2's), milestone 5 at
+  https://claude.ai/artifact/CoN3nkpepFjyn5LSbPEQ7j (menu, PAL60 confirmation, Namco logo; four fixes).
 
 ## Next steps
 1. Field-mode display (milestone 6 groundwork): SMODE2 = 3 (INT=1, FFMD=1), the game draws a half-height

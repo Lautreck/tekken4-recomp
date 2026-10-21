@@ -19,11 +19,19 @@ for %%P in ("%~dp0..\patches\*.patch") do set "LASTPATCH=%%~fP"
 git -C "%SRC%" apply --reverse --check "%LASTPATCH%" >nul 2>&1
 if errorlevel 1 for %%P in ("%~dp0..\patches\*.patch") do call :apply "%%~fP"
 if defined PATCHFAIL exit /b 1
+rem Native VU1 blocks from the micro memories captured in game\vu1\micro (GOW_VU1_CAPTURA, see docs/status.md
+rem "Native VU1 port"); none there, or TEKKEN4_VU1N=0, builds the interpreter only.
+set "VU1DIR="
+for %%D in ("%~dp0..\game\vu1\micro") do set "VU1DIR=%%~fD"
+if not exist "%VU1DIR%\*.bin" set "VU1DIR="
+if "%TEKKEN4_VU1N%"=="0" set "VU1DIR="
+if defined VU1DIR set "VU1DIR=%VU1DIR:\=/%"
 rem RelWithDebInfo with full inlining (/Ob2 like Release; CMake's default /Ob1 kept the GS's per-pixel helpers as calls).
 cmake -S "%SRC%" -B "%SRC%\out\runtime" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
   "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=/Zi /O2 /Ob2 /DNDEBUG" "-DCMAKE_C_FLAGS_RELWITHDEBINFO=/Zi /O2 /Ob2 /DNDEBUG" ^
   -DPS2X_BUILD_RECOMP=OFF -DPS2X_BUILD_ANALYZER=OFF -DPS2X_BUILD_TEST=OFF -DPS2X_BUILD_STUDIO=OFF ^
-  -DPS2X_ENABLE_AGRESSIVE_LOGS=OFF -DPS2X_ENABLE_RUNTIME_LOGS=ON -DPS2X_ENABLE_IOP_RPC_TRACE=ON
+  -DPS2X_ENABLE_AGRESSIVE_LOGS=OFF -DPS2X_ENABLE_RUNTIME_LOGS=ON -DPS2X_ENABLE_IOP_RPC_TRACE=ON ^
+  "-DPS2X_VU1_MICROCODE_DIR=%VU1DIR%"
 if errorlevel 1 exit /b 1
 cmake --build "%SRC%\out\runtime" --target ps2EntryRunner
 if errorlevel 1 exit /b 1

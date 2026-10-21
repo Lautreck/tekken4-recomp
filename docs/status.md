@@ -26,7 +26,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   A fight loads and renders (Stage 1, Kazuya vs Law) but at ~7 fps: the VU1 interpreter (see "First fight").
   Native VU1 port started (stopped at the user's 95% usage report): the GoW VU1 engine is in (patch 11, 465/465
   tests), no native blocks generated yet (see "Native VU1 port").
-- **Resume at: "Native VU1 port", "Root cause found one level up" (the game's CNT qwc=4; Grok cnt-qwc result).**
+- **Resume at (Claude hit the usage limit 2026-10-21 ~22:30):** Grok works on the stall alone via the handoff (docs/ai/handoff.md, tools/grok_lead.ps1, started detached after Grok task cnt-qwc). On return: read logs/grok/lead_journal.json, `git log --oneline master..grok/wip`, review each diff (runtime/tekken4_overrides.cpp hook), run tests, merge what holds. Then "Native VU1 port" -> "Root cause found one level up".
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).

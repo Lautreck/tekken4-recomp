@@ -62,3 +62,11 @@ Goal (user): one seamless team, each keeps its specialisation.
 - Claude commits+pushes everything first (restore point), writes docs/ai/handoff.md (steps: ### STEP name | ask|work | owned files, then the prompt blocks), and starts `powershell -File tools\grok_lead.ps1`.
 - The driver runs the steps in order through grok_task.ps1 and stops at the first failure (unparsed JSON, contra[] non-empty, work step without owned-file change); journal logs\grok\lead_journal.json.
 - Grok never commits; on return Claude reads the journal, reviews each diff, runs the tests, commits what holds and restores the rest.
+
+## PROGRESS NEVER LOST: branch grok/wip
+- After every Grok task the wrapper (not Grok) commits onto branch grok/wip and pushes it: the result json, its notes
+  (logs/grok/<task>*.md), its owned repo files, and its PS2Recomp changes as grok-wip/<task>_<time>.patch. It uses a
+  temporary index (git read-tree / update-index / write-tree / commit-tree / update-ref): master, the checkout and the
+  real index are untouched; Grok still has no git write rights.
+- Claude reviews cheaply: `git log --oneline master..grok/wip` (one line per task = its verdict), `git diff --stat
+  master...grok/wip`, then only the diffs that matter; merges / applies what holds, leaves the rest on the branch.

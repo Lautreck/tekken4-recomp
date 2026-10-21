@@ -117,4 +117,45 @@ $result = [ordered]@{
 }
 $log = Join-Path $logDir ("{0}_{1}.json" -f $Name, $stamp)
 [System.IO.File]::WriteAllText($log, ($result | ConvertTo-Json -Depth 12 -Compress), (New-Object System.Text.UTF8Encoding $false))
+
+# Checkpoint on branch grok/wip (pushed to origin), without touching the checkout, the index or master: the task's
+# result json, its notes (logs/grok/<Name>*.md), its owned repo files, and its PS2Recomp changes as a patch file.
+# Grok itself never runs git; Claude reviews with `git log master..grok/wip` and merges what holds.
+$tmpIndex = Join-Path $env:TEMP ("grok-wip-index-" + $stamp)
+$OutputEncoding = New-Object System.Text.UTF8Encoding $false  # no BOM in what is piped to git (the commit message)
+try {
+    $files = @(@{ path = "grok-wip/" + (Split-Path -Leaf $log); file = $log })
+    Get-ChildItem $logDir -Filter "$Name*.md" -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $t0 } |
+        ForEach-Object { $files += @{ path = "grok-wip/" + $_.Name; file = $_.FullName } }
+    foreach ($f in $mine) {
+        $full = Join-Path $root $f
+        if ($f -notlike "external/PS2Recomp/*" -and (Test-Path $full)) { $files += @{ path = $f; file = $full } }
+    }
+    $ps2 = @($mine | Where-Object { $_ -like "external/PS2Recomp/*" } | ForEach-Object { $_.Substring(19) })
+    if ($ps2.Count) {
+        $patch = Join-Path $logDir ("{0}_{1}.patch" -f $Name, $stamp)
+        $diff = git -C (Join-Path $root "external\PS2Recomp") diff HEAD -- @ps2
+        [System.IO.File]::WriteAllText($patch, (($diff -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding $false))
+        $files += @{ path = "grok-wip/" + (Split-Path -Leaf $patch); file = $patch }
+    }
+    $parent = git -C $root rev-parse --verify -q refs/heads/grok/wip
+    if (-not $parent) { $parent = git -C $root rev-parse master }
+    $env:GIT_INDEX_FILE = $tmpIndex
+    git -C $root read-tree $parent
+    foreach ($x in $files) {
+        $blob = git -C $root hash-object -w -- $x.file
+        git -C $root update-index --add --cacheinfo "100644,$blob,$($x.path)"
+    }
+    $tree = git -C $root write-tree
+    Remove-Item Env:GIT_INDEX_FILE
+    $verdict = if ($answer -and $answer.verdict) { [string]$answer.verdict } else { "no parsed answer" }
+    if ($verdict.Length -gt 180) { $verdict = $verdict.Substring(0, 180) }
+    $commit = "grok $Name ($Mode): $verdict" | git -C $root commit-tree $tree -p $parent
+    git -C $root update-ref refs/heads/grok/wip $commit
+    git -C $root push -q origin grok/wip 2>$null
+    "checkpoint grok/wip $($commit.Substring(0, 7)) ($($files.Count) files)"
+} catch { "checkpoint failed: $_" } finally {
+    Remove-Item Env:GIT_INDEX_FILE -ErrorAction SilentlyContinue
+    Remove-Item $tmpIndex -ErrorAction SilentlyContinue
+}
 "grok $Name done {0}s parsed={1}: $log" -f $result.seconds, [bool]$answer

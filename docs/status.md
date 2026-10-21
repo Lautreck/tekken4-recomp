@@ -11,7 +11,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   (see "First run"); 350 missing functions added (4 constructors + 346 vtable/callback targets) (see "Missing
   functions fix"); silent sound-driver override (see "Sound driver override"); MFIFO + D_ENABLE runtime
   patch (see "MFIFO + D_ENABLE patch"). Milestone 4 published (see "Publishing").
-- **Resume at: milestone 5, extra VIF1/GIF end interrupts drive the ring counter negative** (see "Why the flush hangs").
+- **Resume at: milestone 5, texture-upload CNT built with qwc 10 instead of 5** (see "Surplus interrupts traced").
 - **Session 3 goal: milestone 5.** The first screen (display-mode menu) draws its 10-strip box, but grey, without
   text, in the top half only. Start from "Next steps" #1.
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
@@ -302,6 +302,18 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
   cause the runtime queues (channel, why: MFIFO END, chain end, normal transfer) for one frame and work out
   the hardware order from the game's packets; suspects: GIF completions from upstream's
   processPendingTransfers (one per call), VIF1 END completions in drainMfifo, the new empty-chain completion.
+- **Surplus interrupts traced (TEKKEN4_IRQ_LOG=<n> wraps the VIF1/GIF end handlers and frame start/end):**
+  frames 0-3 are balanced (start, GIF end, VIF1 end, frame end +1, VIF1 end, GIF end -1, VIF1 end stop).
+  In frame 4 (first frame with the loaded menu data) path 1 ends early: our ring has REF 0x312900 (8),
+  REF 0x312980 (2), then **CNT qwc 0xa** where PCSX2 has **CNT qwc 5** (FLUSHE; DIRECTHL 5 = BITBLTBUF..
+  TRXDIR), CNT 1 (IMAGE giftag), REF 0x373820 qwc 0x1d7d (the texture), CNT 5, CNT 0x152 draw lists...
+  The 10 qwords swallow the next tags, VIF1 lands on garbage that decodes as REFE (addr 0x12340) and ends
+  path 1 before the frame-end +1; the handlers then loop and drive the counter negative.
+  So the EE code that builds the texture-upload CNT computes qwc 10 instead of 5 (EE-side bug or another
+  missing runtime feature, like the toSPR one). Builders that emit DIRECTHL (lui 0x5100): FUN_001eec80,
+  FUN_001feef8, FUN_0020cb68, FUN_00227f80, FUN_002344e0 (the last uses sceVif1Pk* and emits REF tags, so
+  not it). Next: find which one builds this CNT (its qwc comes from the GIF part it opens), compare its
+  inputs/outputs with PCSX2 (PINE: dump scratchpad/ring right after it), fix the cause.
 - Also in the dma-chain patch: a chain that ends without data (lone END/REFE/IRQ tag) now completes its
   channel (upstream left STR set and raised no interrupt). Correct per hardware, but didn't fix the hang.
 - Side findings: the menu text isn't in the ELF; the IOP module package is embedded LZ-compressed and

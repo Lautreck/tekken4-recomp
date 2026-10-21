@@ -8,7 +8,9 @@
 #include "runtime/ps2_memory.h"
 #include "runtime/gs/gs_frontend.h"
 #include "Stubs/CD.h"
+#include <ps2_recompiled_functions.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -353,8 +355,47 @@ namespace tekken4
         setReturnS32(ctx, 0); // never busy: every call completes inside sifCallRpc
     }
 
+    // Debug aid (TEKKEN4_IRQ_LOG=<count>): log the MFIFO ring state around the game's DMA-end handlers and its
+    // frame start/end, to see which end interrupts arrive and in what order.
+    std::atomic<int> g_irqLogLeft{0};
+
+    std::string ringState(const uint8_t *rdram)
+    {
+        const uint8_t *s = rdram + 0x1cda2c0u;
+        int32_t pending = 0;
+        std::memcpy(&pending, s + 4, 4);
+        std::ostringstream o;
+        o << "[0]=" << +s[0] << " [1]=" << +s[1] << " [2]=" << +s[2] << " [3]=" << +s[3] << " [4]=" << pending;
+        return o.str();
+    }
+
+    template <void (*Original)(uint8_t *, R5900Context *, PS2Runtime *)>
+    void logged(const char *what, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        const bool log = g_irqLogLeft.fetch_sub(1) > 0;
+        const std::string before = log ? ringState(rdram) : std::string();
+        const uint32_t cause = getRegU32(ctx, 4);
+        Original(rdram, ctx, runtime);
+        if (log)
+            RUNTIME_LOG("[tekken4] " << what << " (a0=" << cause << ") frame " << g_frames << ": " << before << "  ->  "
+                                     << ringState(rdram) << "\n");
+    }
+
+    void vif1EndLogged(uint8_t *r, R5900Context *c, PS2Runtime *p) { logged<FUN_00233430_0x233430>("VIF1 end handler", r, c, p); }
+    void gifEndLogged(uint8_t *r, R5900Context *c, PS2Runtime *p) { logged<FUN_00233548_0x233548>("GIF end handler ", r, c, p); }
+    void frameStartLogged(uint8_t *r, R5900Context *c, PS2Runtime *p) { logged<FUN_00232d20_0x232d20>("frame start     ", r, c, p); }
+    void frameEndLogged(uint8_t *r, R5900Context *c, PS2Runtime *p) { logged<FUN_00233a38_0x233a38>("frame end (+1)  ", r, c, p); }
+
     void apply(PS2Runtime &runtime)
     {
+        if (const char *irqLog = std::getenv("TEKKEN4_IRQ_LOG"))
+        {
+            g_irqLogLeft = std::atoi(irqLog);
+            runtime.registerFunction(0x00233430u, vif1EndLogged);
+            runtime.registerFunction(0x00233548u, gifEndLogged);
+            runtime.registerFunction(0x00232d20u, frameStartLogged);
+            runtime.registerFunction(0x00233a38u, frameEndLogged);
+        }
         if (const char *watch = std::getenv("TEKKEN4_WATCH_MS"))
         {
             // Debug aid for stalls: after the delay, log the MFIFO ring state (struct from FUN_00232c20:

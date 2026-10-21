@@ -16,7 +16,8 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   milestone 5 page (see "Publishing"). Display fixed: interlaced FRAME mode now shows the half-height buffer
   line-doubled, full screen like PCSX2 (patch 03 = PR #375, see "Display line repeat").
   The intro movie now plays (see "Intro movie").
-- **Resume at: "Next steps" #1, the 1-pixel gaps between sprite strips (vertical lines on the menu and movie).**
+  Strip gaps fixed (patch 05, see "Sprite strip gaps").
+- **Resume at: "Next steps" #1, the picture "vibrates" (user report, 2026-10-21).**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
@@ -398,6 +399,16 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
 - Result: the intro plays (docs/img/movie_intro_volcano.png, movie_intro_scene.png), no sound. Thin vertical lines
   every 64 px are gaps between the picture's sprite strips (the menu box has them too); PCSX2 has none.
 
+## Sprite strip gaps (session 3, 2026-10-21)
+- The display buffer (FBP 0xd2) is filled each frame by a copy of the 640x448 back buffer (FBP 0) into a 224-line
+  field: ~280 bilinear sprites (REGLIST PRIM/UV/XYZ2/UV/XYZ2, 64-px columns of 16-row bands, a second 50%-blended
+  pass one texel row lower). Each column runs from X 64k to 64k+63.5 (0x6ff8 - 0x6c00 = 63.5).
+- DrawSprite truncated the vertex X to int, so 63.5 became 63 and column 63 of every strip was never written:
+  the black line every 64 px on the menu box and the movie. GS rule: a sprite covers X0 <= x < X1, so 63.5
+  covers column 63. **Patch 05** computes the covered pixels as ceil(X0) .. ceil(X1)-1 and maps the texture over
+  the exact (fractional) width; integer-aligned sprites are unchanged. Tests 454/454; docs/img/movie_no_strip_gaps.png.
+  Not upstreamed yet (PR + a test with a 63.5-wide sprite to do).
+
 ## Publishing (from 2026-10-21)
 The user pre-authorized publishing every successful milestone on three channels:
 - **Project repo (public):** https://github.com/Lautreck/tekken4-recomp (`origin`, branch `master`). Commits use
@@ -423,9 +434,12 @@ The user pre-authorized publishing every successful milestone on three channels:
   https://claude.ai/artifact/CoN3nkpepFjyn5LSbPEQ7j (menu, PAL60 confirmation, Namco logo; four fixes).
 
 ## Next steps
-1. Sprite strip gaps: the menu box and the movie are drawn as 64-px strips and every strip edge leaves a dark
-   1-px column in our GS renderer (none in PCSX2). Check the strips' XYZ/UV (GS dump: TEKKEN4_GS_DUMP) against the
-   GS sprite rules (pixel centers, X1 inclusive / X2 exclusive, XYOFFSET) in gs_cpu_backend's sprite raster.
+1. **Vibrating picture** (user saw the whole game shake). Likely cause, not checked yet: in interlaced FRAME mode
+   the game renders one field per frame and alternates the field's rows (the copy's V offset 0/1, chosen from
+   GS CSR.FIELD read in the vsync handler 0x22aaf8). A TV shows the odd field one line lower; patch 03 line-doubles
+   both fields at the same place, so the picture moves up/down by a line every frame. Fix in the presentation:
+   for FFMD=1, shift the odd field down by one display line (or weave/blend the two fields). Compare PCSX2.
+   Also upstream patch 05 (sprite edges) with a test.
 2. After the movie: follow the game to the title screen and compare with PCSX2 (input to skip the movie: Start).
 3. Frame pacing: 38-47 vs 50/60 fps. The loop busy-waits on `RCNT0_COUNT >= 0x724` and on vsync.
 4. Sound for real (milestone 8): find how the game loads its IOP modules (sceSifRebootIop with

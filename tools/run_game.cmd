@@ -4,7 +4,8 @@ rem Close the game window to stop it; the console output is then complete in log
 rem The line to look at is usually the last "[guest-branch:...]" or crash line near the end.
 setlocal
 set "ROOT=%~dp0.."
-set "EXE=%ROOT%\external\PS2Recomp\out\runtime\ps2xRuntime\ps2EntryRunner.exe"
+if not defined TEKKEN4_BUILD_DIR set "TEKKEN4_BUILD_DIR=runtime"
+set "EXE=%ROOT%\external\PS2Recomp\out\%TEKKEN4_BUILD_DIR%\ps2xRuntime\ps2EntryRunner.exe"
 if not exist "%EXE%" (echo ps2EntryRunner.exe not built: run tools\build_runtime.cmd & exit /b 1)
 if not exist "%ROOT%\logs" mkdir "%ROOT%\logs"
 rem Draw on several threads (the runtime's GS is a software renderer); set PS2X_GS_THREADS=0 to draw on one.

@@ -1,6 +1,7 @@
 @echo off
 rem Builds PS2Recomp's ps2EntryRunner (RelWithDebInfo) with MSVC + Ninja. Run tools\stage_generated.cmd first.
-rem Output: external\PS2Recomp\out\runtime\ps2xRuntime\ps2EntryRunner.exe
+rem Output: external\PS2Recomp\out\runtime\ps2xRuntime\ps2EntryRunner.exe, or out\<TEKKEN4_BUILD_DIR> when that is set
+rem (Grok builds in out\grok so its builds and Claude's never overwrite each other; run_capture / run_game follow it).
 rem Logs: per-function trace (AGRESSIVE_LOGS) off, it is what slowed the GoW port down; console runtime
 rem logs and the IOP RPC trace stay on while we chase boot problems. Changing any of these rebuilds everything.
 setlocal
@@ -10,6 +11,8 @@ call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" >nul
 if errorlevel 1 exit /b 1
 set "PATH=%ProgramFiles%\CMake\bin;%LOCALAPPDATA%\Microsoft\WinGet\Links;%PATH%"
 set "SRC=%~dp0..\external\PS2Recomp"
+if not defined TEKKEN4_BUILD_DIR set "TEKKEN4_BUILD_DIR=runtime"
+set "BUILD=%SRC%\out\%TEKKEN4_BUILD_DIR%"
 rem Our runtime patches (patches\*.patch, against the pinned PS2Recomp commit, applied in name order). They stack,
 rem so when the last one is already in the tree they all are (an earlier one alone may not reverse any more, its
 rem context changed by a later one); otherwise already-applied ones are skipped.
@@ -27,13 +30,13 @@ if not exist "%VU1DIR%\*.bin" set "VU1DIR="
 if "%TEKKEN4_VU1N%"=="0" set "VU1DIR="
 if defined VU1DIR set "VU1DIR=%VU1DIR:\=/%"
 rem RelWithDebInfo with full inlining (/Ob2 like Release; CMake's default /Ob1 kept the GS's per-pixel helpers as calls).
-cmake -S "%SRC%" -B "%SRC%\out\runtime" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
+cmake -S "%SRC%" -B "%BUILD%" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
   "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=/Zi /O2 /Ob2 /DNDEBUG" "-DCMAKE_C_FLAGS_RELWITHDEBINFO=/Zi /O2 /Ob2 /DNDEBUG" ^
   -DPS2X_BUILD_RECOMP=OFF -DPS2X_BUILD_ANALYZER=OFF -DPS2X_BUILD_TEST=OFF -DPS2X_BUILD_STUDIO=OFF ^
   -DPS2X_ENABLE_AGRESSIVE_LOGS=OFF -DPS2X_ENABLE_RUNTIME_LOGS=ON -DPS2X_ENABLE_IOP_RPC_TRACE=ON ^
   "-DPS2X_VU1_MICROCODE_DIR=%VU1DIR%"
 if errorlevel 1 exit /b 1
-cmake --build "%SRC%\out\runtime" --target ps2EntryRunner
+cmake --build "%BUILD%" --target ps2EntryRunner
 if errorlevel 1 exit /b 1
 exit /b 0
 

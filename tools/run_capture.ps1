@@ -1,4 +1,7 @@
-param([string]$RunDir = "", [int[]]$Shots = @(20), [string[]]$Keys = @())
+param([string]$RunDir = "", [string[]]$Shots = @("20"), [string[]]$Keys = @())
+# powershell -File passes a list like 9,20 or "10:Down","12:Cross" as one comma-joined string: split it here.
+$Shots = @($Shots | ForEach-Object { $_ -split ',' } | Where-Object { $_ } | ForEach-Object { [double]$_ })
+$Keys = @($Keys | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 # Runs ps2EntryRunner on the Tekken 4 ELF, hides the runtime's debug panel (F1), presses pad buttons at given
 # times, saves window captures at the given second marks, then closes it. Output: stdout.txt, stderr.txt and
 # shot_NNs.png in $RunDir (default logs\run_<time>).
@@ -30,7 +33,8 @@ function Send-Key([IntPtr]$h, [int]$vkCode, [int]$scanCode, [bool]$extended, [in
     [void][RunCaptureWin]::PostMessage($h, 0x0101, [IntPtr]$vkCode, [IntPtr]($flags -bor [int64]0xC0000000))
 }
 New-Item -ItemType Directory -Force $RunDir | Out-Null
-$exe = Join-Path $root "external\PS2Recomp\out\runtime\ps2xRuntime\ps2EntryRunner.exe"
+$buildDir = if ($env:TEKKEN4_BUILD_DIR) { $env:TEKKEN4_BUILD_DIR } else { "runtime" }  # Grok: out\grok
+$exe = Join-Path $root "external\PS2Recomp\out\$buildDir\ps2xRuntime\ps2EntryRunner.exe"
 $elf = Join-Path $root "game\disc\SCES_508.78"
 # Draw on several threads like tools\run_game.cmd (set PS2X_GS_THREADS=0 beforehand to draw on one).
 if (-not $env:PS2X_GS_THREADS) { $env:PS2X_GS_THREADS = "auto" }

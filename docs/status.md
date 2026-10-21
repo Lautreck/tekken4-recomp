@@ -572,22 +572,25 @@ Progress (2026-10-21, commits a31b778, fda9e02):
 The user added Grok (xAI Grok Build CLI 1.0.62, `C:\Users\pablo\.grok\bin\grok.exe`, signed in with the user's
 grok.com account, default model grok-4.7) as a parallel worker, second opinion and reviewer; it may see everything that
 is not personal (never the disc files, ISO or BIOS). Heavy analysis / coding jobs go to it too (`-Effort high`).
-- `tools\grok_task.ps1 -Name <n> -Mode ask|work [-Effort high] (-Prompt <text> | -PromptFile <file>)`, run in the
-  background; result in `logs\grok\<n>_<time>.md` (prompt in `.prompt.md`). The prompt goes through `--prompt-file`
-  (PowerShell 5.1 breaks double quotes in native arguments). Project rules are passed with `--rules` (Grok does not
-  load the project's CLAUDE.md: the project is not "trusted").
-- ask: in the project, no file edits; `python -I` and read-only git allowed (`--allow "Bash(python -I:*)"` etc.).
-  work: Grok edits in its own clone `~\.grok\worktrees\claude-troubleshoot-tekken-4-recomp\<n>` (tracked files
-  only: no game\, external\, logs\, so it cannot build); review with `git -C <clone> diff`, remove with
-  `grok worktree rm <id>`.
-- Headless runs cannot approve anything: a refused tool ends the run without a final answer (all three tasks so far:
-  python in plan mode twice, then the Write tool for a script in logs/grok/). Fix next: allow writes limited to
-  logs/grok/ in ask mode (try `--allow "Write(logs/grok/**)"`), or tell it to write scripts with python only.
-- Grok "vu1-vi12" (cut off, partial): vi12 is used as the count mask once (0x3390) and then overwritten inside the
-  same program, so the mask at the next start of 0x32a0 is whatever an earlier run left. Rerun it once fixed.
+- `tools\grok_task.ps1 -Name <n> -Mode ask|work [-Owns <files>] [-Effort high] (-Prompt <text> | -PromptFile <file>)`,
+  run in the background; result in `logs\grok\<n>_<time>.md` (answer + files changed in both repos), prompt in
+  `.prompt.md`. The prompt goes through `--prompt-file` (PowerShell 5.1 breaks double quotes in native arguments).
+  Project rules are passed with `--rules` (Grok does not load the project's CLAUDE.md: the project is not "trusted").
+- A headless run cannot approve anything, and a refused tool ends it without a final answer, so each mode allows
+  exactly what its tasks need (`--allow` rules; `--always-approve` is refused by Claude Code's auto mode):
+  - ask (analysis, reviews, research): reads anything, writes only `logs/grok/**`, runs `python -I` and read-only git.
+  - work (a change, in the main project): edits only the `-Owns` files and `logs/grok/**`, runs
+    `cmd /c tools\build_runtime.cmd` and `powershell -File tools\run_capture.ps1` with `TEKKEN4_BUILD_DIR=grok`
+    (build in `external\PS2Recomp\out\grok`, never Claude's `out\runtime`), plus python and read-only git; never
+    commits. Claude keeps off the owned files meanwhile, reviews the diff and commits.
+- The build/run scripts take `TEKKEN4_BUILD_DIR` (default `runtime`). Both builds compile the same PS2Recomp source
+  tree, so an owned file Grok is mid-way through editing also lands in Claude's next build.
 - Findings so far: the pad-2 bug is `scePadGetState` (external/PS2Recomp/.../Kernel/Stubs/Pad.cpp:453) returning
   "stable" for any opened port without checking that a pad is connected, so port 2 looks plugged in (PRESS P2 START,
   VS BATTLE). Fix next: report port 2 disconnected unless a second host pad exists (generic, a PS2Recomp patch).
+- Grok "vu1-vi12" (cut off by a refused write before the modes above, partial): vi12 is used as the count mask once
+  (0x3390) and then overwritten inside the same program, so the mask at the next start of 0x32a0 is whatever an
+  earlier run left. Rerun it with the new ask mode.
 
 ## Publishing (from 2026-10-21)
 The user pre-authorized publishing every successful milestone on three channels:

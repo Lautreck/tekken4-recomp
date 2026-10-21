@@ -23,7 +23,8 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   **Milestone 6 reached:** Cross on MEDIUM opens the main menu (MODE SELECT: STORY BATTLE .. OPTIONS), as in PCSX2.
   Frame rate fixed: 60 fps on every screen so far (patch 09, see "GS speed").
   Character select works (IPU images decoded through FFmpeg, see "Character select").
-- **Resume at: "Next steps" #1 (milestone 7: pick a fighter, then the stage).**
+  A fight loads and renders (Stage 1, Kazuya vs Law) but at ~7 fps: the VU1 interpreter (see "First fight").
+- **Resume at: "Next steps" #1 (VU1 speed for the fight).**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
@@ -500,6 +501,20 @@ Their runtime is a full PS2Recomp fork on the repo's `origin/runtime` branch (re
   the grid, the countdown. Ours shows PRESS P2 START where PCSX2 has CREDIT 0 (pad 2 reported as connected, the
   same as VS BATTLE being enabled). The countdown went 24 -> 19 in 7 s, so check the frame rate here.
 
+## First fight (session 3, 2026-10-21)
+- Keys `...,"40:Down","41.5:Cross","46:Cross"` (Arcade, Kazuya with the cursor's default). The select screen runs
+  at 48-49 fps; after the pick the game loads Stage 1 and shows the fight: HUD (STAGE 1, timer 60, KAZUYA / LAW
+  health bars), the 3D stage (palms, glass hall), Kazuya's intro animation (docs/img/first_fight.png,
+  first_fight_stage.png). PCSX2 not compared yet.
+- **~7 fps** in the fight (TEKKEN4_PERF_LOG, logs/fight1). Profile (TEKKEN4_PROFILE=62:10, logs/fightprof1): ~65 %
+  of the game thread in the VU1 interpreter (commitReadyPipelines 22 %, normalizeOperand 8 %, run 8 %,
+  calculatePairReadyCycle 6 %, execUpper 5 %, FMAC flags/results ~8 %), 18 % waiting (NtWaitForAlertByThreadId:
+  the GS worker barriers or the vsync wait), little GS.
+- The God of War port hit the same wall (docs/performance.md there: VU1 61 % of a frame) and reached 60 fps in
+  gameplay with: native VU1 code generated ahead of time from captured micro-memories (tools/vu1/vu1n_gen.py,
+  bit-exact replay check), VIF1 + VU1 on a worker thread pipelined with the GS frontend, and a VIF1 UNPACK fast path.
+  Those live in their fork, not upstream. Tekken's ELF has 22 .DVP.overlay sections (its VU1 micro-programs).
+
 ## Publishing (from 2026-10-21)
 The user pre-authorized publishing every successful milestone on three channels:
 - **Project repo (public):** https://github.com/Lautreck/tekken4-recomp (`origin`, branch `master`). Commits use
@@ -530,9 +545,11 @@ The user pre-authorized publishing every successful milestone on three channels:
 
 ## Next steps
 1. Upstream patch 09 (GS speed + drawing threads) once PR #377 is in, as a follow-up PR.
-2. Milestone 7, a fight: the character select works (see "Character select"). Next: frame rate on that screen,
-   then pick a fighter (Cross) and follow the game into the stage vs PCSX2. Also: pad 2 is reported as connected
-   (VS BATTLE enabled, PRESS P2 START instead of CREDIT 0).
+2. Milestone 7, a fight: it loads and renders (see "First fight") at ~7 fps, VU1-bound. Options, cheapest
+   first: (a) speed up the VU1 interpreter's hot paths (pipeline bookkeeping per pair); (b) VIF1 + VU1 on a worker
+   thread (the GoW port's PS2X_GS_WORKER); (c) native VU1: translate Tekken's 22 micro-program overlays ahead of
+   time (the GoW port's vu1n_gen.py approach, with a bit-exact replay check). Then compare the fight with PCSX2,
+   test fight input (pad 1 moves), and look at pad 2 being reported as connected (PRESS P2 START, VS BATTLE).
 3. Sound for real (milestone 8): find how the game loads its IOP modules (sceSifRebootIop with
    IOPRP243.IMG, then module buffers probably from DATA.BIN), extract the sound IRX and run it on ps2xIOP's
    emulated IOP. Then the override's sound part goes away.

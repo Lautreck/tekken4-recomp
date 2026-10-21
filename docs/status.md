@@ -26,7 +26,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   A fight loads and renders (Stage 1, Kazuya vs Law) but at ~7 fps: the VU1 interpreter (see "First fight").
   Native VU1 port started (stopped at the user's 95% usage report): the GoW VU1 engine is in (patch 11, 465/465
   tests), no native blocks generated yet (see "Native VU1 port").
-- **Resume at: "Native VU1 port", "Now" (fight drops to 0 fps after ~1 min with native VU1).**
+- **Resume at: "Native VU1 port", "Now / next" (fight stalls ~4 s in: VU1 program 0x32a0 loops; not a native bug).**
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
@@ -553,10 +553,37 @@ Progress (2026-10-21, commits a31b778, fda9e02):
   sees their MAC flags (it read an older MUL's).
 - Left in verify: "mac"-only end-state differences, and single ADC words where the interpreter recomputes a nearly
   cancelling MSUB from the unrounded product while native subtracts the rounded one (edge-on triangles; harmless).
-- **Now:** fight at 11-25 fps (was ~7), but after ~1 min of fight it falls to 0 fps: VU1 runs take the whole frame
-  again (`[vu1-stats]` ~17k runs per 5 s, ~40k cycles each = a native program running to its cycle budget).
-  Next: find that program (GOW_VU1N_DIAG / bisect on a run started in the fight), likely a loop exit test on flags,
-  Q latency or a missing block head.
+- Fight with native VU1: 11-25 fps (interpreter: 7-9), stage and both fighters drawn (logs/vu1n_fight4).
+- **The stall is not native VU1.** About 4 s into the fight (clock 00:03:68, timer 56) the program at 0x32a0 runs to its
+  65536-cycle budget every time (`GOW_VU1_LONGRUNS=40000` prints `[vu1-long] startPc=32a0 ... budget`), then garbage
+  XGKICKs follow (the runaway loop writes over VU memory: "[VU1 reserved lower] ... 0xfffffffb/8" = rejected GIF tags).
+  `GOW_VU1N_CHECKLONG=1` re-runs each such run with the exact engine from the same entry state: it loops too. And the
+  interpreter-only build (`GOW_VU1_NATIVE_OFF=1`, logs/vu1_interp_long) stalls the same way at the same fight time
+  (134 s there, it is slower). The loop counter is `vi8 = vi5 & vi12` (pc 0x3390; vi5 = count from the packet header,
+  vi12 = mask, normally 0x7fff), decremented per pass until 0: in the stalled runs vi12 is 0 at entry (VI registers
+  carry over between VU1 programs), so the count is 0 and the loop wraps 65535 times.
+- **Now / next:** find why vi12 (or the header count) is 0 at entry to 0x32a0 from ~4 s into the fight: which program
+  sets vi12 (Grok task "vu1-vi12" in logs/grok/), what the EE sends that frame (VIF1 packets: MSCAL order, a VIF
+  STROW/STMOD/UNPACK problem, or an MSCNT/MSCALF the runtime handles differently), compared with PCSX2 at the same
+  moment (its debugger: VU1 registers at MSCAL 0x32a0).
+- New debug switches in patch 11: `GOW_VU1_LONGRUNS=<cycles>` (log runs longer than that), `GOW_VU1N_CHECKLONG=1`.
+
+## Grok in the pipeline (from 2026-10-21)
+The user added Grok (xAI Grok Build CLI 1.0.62, `C:\Users\pablo\.grok\bin\grok.exe`, signed in with the user's
+grok.com account, default model grok-4.7) as a parallel worker, second opinion and reviewer; it may see everything that
+is not personal (never the disc files, ISO or BIOS). Heavy analysis / coding jobs go to it too (`-Effort high`).
+- `tools\grok_task.ps1 -Name <n> -Mode ask|work [-Effort high] (-Prompt <text> | -PromptFile <file>)`, run in the
+  background; result in `logs\grok\<n>_<time>.md` (prompt in `.prompt.md`). The prompt goes through `--prompt-file`
+  (PowerShell 5.1 breaks double quotes in native arguments). Project rules are passed with `--rules` (Grok does not
+  load the project's CLAUDE.md: the project is not "trusted").
+- ask: in the project, no file edits; `python -I` and read-only git allowed (`--allow "Bash(python -I:*)"` etc.).
+  work: Grok edits in its own clone `~\.grok\worktrees\claude-troubleshoot-tekken-4-recomp\<n>` (tracked files
+  only: no game\, external\, logs\, so it cannot build); review with `git -C <clone> diff`, remove with
+  `grok worktree rm <id>`.
+- Headless runs cannot approve anything: a refused tool ends the run without a final answer (the first two tasks).
+- Findings so far: the pad-2 bug is `scePadGetState` (external/PS2Recomp/.../Kernel/Stubs/Pad.cpp:453) returning
+  "stable" for any opened port without checking that a pad is connected, so port 2 looks plugged in (PRESS P2 START,
+  VS BATTLE). Fix next: report port 2 disconnected unless a second host pad exists (generic, a PS2Recomp patch).
 
 ## Publishing (from 2026-10-21)
 The user pre-authorized publishing every successful milestone on three channels:

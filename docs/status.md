@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-10-21 (session 3)_
+_Last updated: 2026-10-21 (end of session 3, stopped at the user's 80% usage)_
 
 ## Resume here
 To continue, open Claude Code in this folder and say: "read docs/status.md and continue".
@@ -11,7 +11,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   (see "First run"); 350 missing functions added (4 constructors + 346 vtable/callback targets) (see "Missing
   functions fix"); silent sound-driver override (see "Sound driver override"); MFIFO + D_ENABLE runtime
   patch (see "MFIFO + D_ENABLE patch"). Milestone 4 published (see "Publishing").
-- Done in session 3: milestone 5 (menu with all text, PAL60 picked as controller 1, Namco logo); the DMA/VIF1
+- Done in session 3 (stopped at the user's 80% usage report): milestone 5 (menu with all text, PAL60 picked as controller 1, Namco logo); the DMA/VIF1
   fixes upstreamed as PR #373 (PATH2 continuation redone to keep upstream's tests passing), pk stub issue #374,
   milestone 5 page (see "Publishing"). Display fixed: interlaced FRAME mode now shows the half-height buffer
   line-doubled, full screen like PCSX2 (patch 03 = PR #375, see "Display line repeat").
@@ -414,6 +414,9 @@ The user pre-authorized publishing every successful milestone on three channels:
   doubling the count when a game's own close runs (our `closeDmaTag` override works around it).
 - PR #375 https://github.com/ran-j/PS2Recomp/pull/375 = patch 03, display line repeat (branch `display-line-repeat`,
   commit d030383, worktree `external/ps2recomp-pr3`, 446/446).
+- PR #376 https://github.com/ran-j/PS2Recomp/pull/376 = patch 04 + a test, sceMpegCreate clears mp->sys word 0
+  (branch `mpeg-create-clears-end`, commit ccaa06f, worktree `external/ps2recomp-pr4`, 446/446).
+- Not published yet: the intro movie (no milestone page; publish with milestone 6, the title screen).
 - **Milestone pages** (private until the user shares them from the page's Share menu): milestone 4 at
   https://claude.ai/artifact/BTDUfBQqwaDsn83wdRh2gf (our runtime screenshot next to PCSX2's), milestone 5 at
   https://claude.ai/artifact/CoN3nkpepFjyn5LSbPEQ7j (menu, PAL60 confirmation, Namco logo; four fixes).
@@ -427,7 +430,7 @@ The user pre-authorized publishing every successful milestone on three channels:
 4. Sound for real (milestone 8): find how the game loads its IOP modules (sceSifRebootIop with
    IOPRP243.IMG, then module buffers probably from DATA.BIN), extract the sound IRX and run it on ps2xIOP's
    emulated IOP. Then the override's sound part goes away.
-5. Watch PRs #372/#373/#375 and issue #374: when merged, move `external/PS2Recomp` back to upstream main and drop the
+5. Watch PRs #372/#373/#375/#376 and issue #374: when merged, move `external/PS2Recomp` back to upstream main and drop the
    patch files.
 6. Re-export from Ghidra (3 late SDK renames) whenever Ghidra is next used for an export; rerun post-process.
 7. Later: export Ghidra's switch tables into `[jump_tables]` to cut the unresolved JR sites.

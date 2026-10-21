@@ -25,8 +25,10 @@ LOOP
    hypotheses labelled) | ASK | LIMITS | DOD from main's brief, then
    `powershell -File tools\grok_start.ps1 -Name <task> -Mode ask|work [-Owns a,b,c] -PromptFile docs\ai\prompts\<task>.md`
    and confirm to main in one line (task, mode, pid). Add the task to the watched set.
-4. MECHANICAL FAILURE (grok.exe gone without a json, json unparsable, a refused tool ended it): relaunch once with the
-   same prompt file, tell main in one line. Anything else (contra[] non-empty, DOD unmet, conf < 0.5): report, do not
+   Every work prompt starts with a line "OWNS: <comma list>" = the exact -Owns of its launch (a relaunch reads it).
+4. MECHANICAL FAILURE (grok.exe gone without a json, json unparsable, a refused tool ended it, or a final answer in
+   < 15 turns with a non-final verdict and the DOD unmet): relaunch once with the same prompt file (-Owns from its OWNS
+   line), tell main in one line. Anything else (contra[] non-empty, DOD unmet, conf < 0.5): report, do not
    relaunch.
 5. A work task whose notes (logs/grok/<task>*-notes.md) are newer than its last run dir and meet its DOD:
    `powershell -File tools\grok_stop.ps1 -Name <task>` (rule C7), then digest.

@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-10-21 (end of session 3, stopped at the user's 80% usage)_
+_Last updated: 2026-10-22 (session 4)_
 
 ## Resume here
 To continue, open Claude Code in this folder and say: "read docs/status.md and continue".
@@ -26,12 +26,17 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   A fight loads and renders (Stage 1, Kazuya vs Law) but at ~7 fps: the VU1 interpreter (see "First fight").
   Native VU1 port started (stopped at the user's 95% usage report): the GoW VU1 engine is in (patch 11, 465/465
   tests), no native blocks generated yet (see "Native VU1 port").
-- **Resume at (2026-10-22 ~01:30, PC restart for an update):** two Grok tasks run DETACHED (survive the restart):
-  fight-camera (docs/ai/prompts/fight-camera.md: camera code + PCSX2 compare plan) and upstream-qwc
-  (docs/ai/prompts/upstream-qwc.md: generic PS2Recomp fix for the stub/game qwc double count). Results land in
-  logs/grok/<task>_<time>.json and on branch grok/wip (`git log --oneline master..grok/wip`); if a grok.exe is still
-  running, wait. Then: (1) fight camera too close: compare Grok's addresses in PCSX2 (tools/pine.py) vs our runtime;
-  (2) upstream PR for the qwc fix; (3) GS speed (fight is GS-bound). Stall itself is FIXED (7d30950).
+- **Resume at (2026-10-22 ~01:40, session 4):** fight 18-21 fps after patch 14 (was 9-13, see "GS drawing threads
+  without stop-and-go"). Start the **grok-manager** subagent first (docs/ai/grok-manager.md, model sonnet; it watches
+  Grok and sends digests, digests also in logs/grok/digest.md). Grok **sound-run** (work, real zsiopdrv audio behind
+  TEKKEN4_SOUND=1, prompt docs/ai/prompts/sound-run.md, OWNS line at its top) was relaunched 01:3x; if it finished,
+  review its diff + listen to its WAV. Done by Grok, not acted on yet: **fight-camera**
+  (logs/grok/fight-camera_20261022_005358.json: camera = FUN_00182430 -> FUN_0018e1e0 eye=base+dir*1000 ->
+  FUN_00193800 look-at; compare plan: u32 0x2AA0D0/0x2AA0D4 -> cam = p+0xF08 -> idx = *(cam+0x174) -> 4x4 at
+  0x01CE2270 + idx*0xC0, 0x40 bytes + f32 slot+0x74, PCSX2 via tools/pine.py vs ours) and **upstream-qwc**
+  (logs/grok/upstream-qwc_20261022_005358.json: drop refreshPacketBuilderPendingCount, ADD the qwc once in
+  terminatePacketBuilderState, rewrite the live-qwc test, add a stub+game-close test; conf 0.5, contra listed).
+  Next: (1) camera live compare; (2) more GS speed (profile the drawing threads now that they run); (3) qwc PR.
 - **Main config is now `config/ghidra_export.toml`**, reading `config/function_map.csv` (Ghidra functions + `extra_functions.csv`). The analyzer seed is kept for reference.
 - Build loop: `ps2_recomp config/ghidra_export.toml` -> `tools\stage_generated.cmd` -> `tools\build_runtime.cmd`
   (~3.5 min clean; applies `patches\*.patch` first) -> `tools\run_game.cmd` (close the window to stop; output in `logs\run.log`).
@@ -615,6 +620,26 @@ Progress (2026-10-21, commits a31b778, fda9e02):
   read (chain walker c / MFIFO drain m), drain ends with the tag at TADR, fromSPR ring copies, VIF1 CHCR / TADR /
   D_CTRL / D_ENABLEW writes, plus VU1 run history and the input header at TOP for runs that hit the budget.
 - New debug switches in patch 11: `GOW_VU1_LONGRUNS=<cycles>` (log runs longer than that), `GOW_VU1N_CHECKLONG=1`.
+
+## GS drawing threads without stop-and-go (session 4, 2026-10-22)
+- Profiler: `TEKKEN4_PROFILE_THREADS=all` samples every thread (second list "profile-threads"). Fight before
+  (logs/fight_threads1, 9-13 fps): the drawing threads drew in only ~12% of their samples; the game thread waited on
+  them 50% and spent 11% waking them (`notify_all` per primitive).
+- `PS2X_GS_DRAIN_STATS=1` (patch 14) prints once a second how many primitives were queued and why the queue had to be
+  drained. With patch 14's first version the fight still drained ~60k times a second for "sample" conflicts: every
+  primitive marked the whole frame + Z up to the scissor bottom, in 32-line pages even for 64-line 16-bit pages.
+- **Patch 14** (`patches/14-ps2xRuntime-gs-threads-async.patch`, tests 467/467, new test: uploads + TEXFLUSH + CLUT
+  reloads under queued primitives give the serial bytes, twice):
+  - lock-free queue (chunk table, generation<<32|count, per-worker progress), workers spin briefly then sleep; the
+    submitter wakes them every 16 primitives and at every wait;
+  - exact page tracking: frame / Z pages under each primitive's bounding box, whole texture, format page sizes
+    (64x32, 64x64 16-bit, 128x64 T8, 128x128 T4), 512-bit masks;
+  - uploads, CLUT loads and TEXFLUSH wait only on real page overlap; texture caches are refreshed per worker through an
+    epoch stamped on each job; CLUT loads under queued primitives write a copy (tables dropped at the next wait);
+  - shutdown drops queued primitives (no drawing after GS memory is gone).
+- Result (logs/fight_drains2, same keys): drains per second sample 60k -> ~120, clut 3-7k -> ~19, upload ~300,
+  write ~90; **fight 18-21 fps** (GS 560 ms per second, was 800); main menu and stage render as before.
+- Not upstreamed yet (builds on patch 09, which is not upstream either).
 
 ## Grok in the pipeline (from 2026-10-21)
 The user added Grok (xAI Grok Build CLI 1.0.62, `C:\Users\pablo\.grok\bin\grok.exe`, signed in with the user's

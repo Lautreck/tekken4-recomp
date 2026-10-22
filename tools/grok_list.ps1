@@ -3,7 +3,7 @@
 $root = Split-Path -Parent $PSScriptRoot
 $logs = Join-Path $root "logs\grok"
 Get-CimInstance Win32_Process -Filter "Name='grok.exe'" | ForEach-Object {
-    if ($_.CommandLine -match 'grok\([a-z0-9-]+)_\d{8}_\d{6}\.prompt') {
+    if ($_.CommandLine -match 'grok.([a-z0-9-]+)_[0-9]{8}_[0-9]{6}[.]prompt') {
         $task = $Matches[1]
         $last = Get-ChildItem $logs -Recurse -File -Filter "$task*" -ErrorAction SilentlyContinue |
             Sort-Object LastWriteTime -Descending | Select-Object -First 1

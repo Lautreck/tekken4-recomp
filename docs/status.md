@@ -740,6 +740,8 @@ The user pre-authorized publishing every successful milestone on three channels:
 - PR #381 https://github.com/ran-j/PS2Recomp/pull/381 = patch 13 upstream (open pad port without a controller
   reads as disconnected), ported by Grok (pad-pr), branch `pad-empty-port-disconnected`, worktree
   `external/ps2recomp-pr8`, 447/447.
+- PR #382 https://github.com/ran-j/PS2Recomp/pull/382 = patch 16 (EE SQRT.S reads ft), branch `sqrt-s-uses-ft`,
+  worktree `external/ps2recomp-pr9`, 445/445. Fixes the Tekken 4 fight camera.
 - **Milestone pages** (private until the user shares them from the page's Share menu): milestone 4 at
   https://claude.ai/artifact/BTDUfBQqwaDsn83wdRh2gf (our runtime screenshot next to PCSX2's), milestone 5 at
   https://claude.ai/artifact/CoN3nkpepFjyn5LSbPEQ7j (menu, PAL60 confirmation, Namco logo; four fixes). Milestone 6 at

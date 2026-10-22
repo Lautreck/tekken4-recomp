@@ -11,8 +11,9 @@ LOOP
 1. WAIT cheaply, one wake per event: Bash run_in_background with an until-loop (poll every 30 s) that exits when
    (a) a logs/grok/*.json appears that is newer than logs/grok/.manager_seen, or (b) a grok.exe process from the
    watched set is gone (`powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='grok.exe'\"" `,
-   task name = the --prompt-file argument), or (c) 45 min passed (heartbeat: no message to main unless something is
-   stuck: a grok.exe alive > 3 h with no new file under logs/grok/ for 1 h). Touch logs/grok/.manager_seen after
+   task name = the --prompt-file argument), or (c) 20 min passed (heartbeat: no message to main unless something is
+   stuck: a WORK task with no new/changed file (its notes, OWNS files, logs/grok/<task>-<n>/ run dirs) for 45 min, an
+   ASK task with no new file for 90 min: stop it and relaunch once with its prompt (mechanical), tell main in one line). Touch logs/grok/.manager_seen after
    handling an event.
 2. ON A RESULT logs/grok/<task>_<stamp>.json (keys: task, mode, answer{verdict, conf, facts[{c,ref,v}], fix[{where,
    change}], contra[], checks[], open[], files_changed[]}, turns, cost_usd, seconds): read it with python -I one-liners

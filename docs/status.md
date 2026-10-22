@@ -697,6 +697,12 @@ The user pre-authorized publishing every successful milestone on three channels:
 - PR #375 also carries patch 06 (second commit d9141f2, field offset; title and description updated, 447/447).
 - PR #377 https://github.com/ran-j/PS2Recomp/pull/377 = patches 05 + 07 + 08 with tests (three commits) (two strips 0..63.5 and 64..127.5),
   branch `sprite-edge-coverage`, worktree `external/ps2recomp-pr5`, 446/446. The test is only in the PR branch.
+- PR #378 https://github.com/ran-j/PS2Recomp/pull/378 = generic qwc fix for issue #374 (stubs no longer SET the open
+  DMA tag qwc; terminate ADDs it once), implemented by Grok (qwc-pr) from its upstream-qwc design, branch
+  `qwc-close-once`, commit 792f431, worktree `external/ps2recomp-pr6`, 449/449. When merged, drop the closeDmaTag
+  override registrations at 0x292900 / 0x292c18 in runtime/tekken4_overrides.cpp (redundant then).
+  Memcard (Grok memcard, logs/grok/memcard_20261022.json): no stub bug; saves only run after a menu asks to save
+  (UI opcode 16), which no test run reached yet.
 - **Milestone pages** (private until the user shares them from the page's Share menu): milestone 4 at
   https://claude.ai/artifact/BTDUfBQqwaDsn83wdRh2gf (our runtime screenshot next to PCSX2's), milestone 5 at
   https://claude.ai/artifact/CoN3nkpepFjyn5LSbPEQ7j (menu, PAL60 confirmation, Namco logo; four fixes). Milestone 6 at

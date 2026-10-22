@@ -27,6 +27,12 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Native VU1 port started (stopped at the user's 95% usage report): the GoW VU1 engine is in (patch 11, 465/465
   tests), no native blocks generated yet (see "Native VU1 port").
 - **Overnight 2026-10-22 (user asleep, wants uninterrupted work):** session-only cron jobs: hourly check at :17, resume at 05:52 after the usage window reset (53% at 01:46). 9 Grok tasks run detached (sound-run, review-patch14, qwc-pr in worktree external/ps2recomp-pr6, jump-tables, memcard, gs-throughput, game-thread done -> game-thread-fixes, usage-meter); grok-manager subagent watches them (digests in logs/grok/digest.md). Camera compare in flight: logs/camera_ours2 (TEKKEN4_CAMERA_LOG) vs logs/pcsx2_camera_probe (tools/pcsx2_camera_probe.ps1). PC power plan: sleep/hibernate never.
+- **Usage meter (2026-10-22):** `python -I tools/usage_meter.py --status` (estimate from transcript token counts,
+  calibrated to /usage: `--calibrate PCT --resets HH:MM`). Hooks installed in .claude/settings.local.json
+  (UserPromptSubmit + PostToolUse, one context line per threshold 50/60/70/75/78/85/90/95), **but they load only
+  after the user opens /hooks once or restarts Claude Code** (settings watcher). Recalibrate after each /usage reading.
+  jump-tables (Grok, logs/grok/jump_tables.toml: 41 tables, unresolved JR 159 -> 142) waits to be merged into
+  config/ghidra_export.toml until no Grok work task is building (regenerates generated/ for everyone).
 - **Resume at (2026-10-22 ~01:40, session 4):** fight 18-21 fps after patch 14 (was 9-13, see "GS drawing threads
   without stop-and-go"). Start the **grok-manager** subagent first (docs/ai/grok-manager.md, model sonnet; it watches
   Grok and sends digests, digests also in logs/grok/digest.md). Grok **sound-run** (work, real zsiopdrv audio behind

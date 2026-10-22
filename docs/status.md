@@ -791,3 +791,10 @@ The user pre-authorized publishing every successful milestone on three channels:
 6. Later: export Ghidra's switch tables into `[jump_tables]` to cut the unresolved JR sites.
 7. Watch: upstream keeps its RPC server pool at guest 0x01F10000, above the game's stack top (sp starts
    ~0x1f00000). If a heap ever lives there, see the GoW `GuestReservedLayout` lesson.
+
+## Batch review 2026-10-22 (grok-review)
+- fpu-pr: committed the 5 files in external/ps2recomp-pr10, pushed Lautreck:ee-fpu-vu0-macro-semantics, opened upstream PR https://github.com/ran-j/PS2Recomp/pull/383 (notes said ready; 449/449 on rerun, 1 flaky Timer2 150 ms wait on the first run).
+- gs-throughput: patches/18-ps2xRuntime-gs-throughput.patch (6 GS files: gs_cpu_backend.h/.cpp, gs_texture_page_cache.h, ps2_gs_memory.h/.cpp, ps2_gs_tests.cpp; gs_frontend unchanged vs p15check) applies clean to external/ps2recomp-p15check (now has 18 applied, uncommitted like 01-17). ps2x_tests 478/478; clean_build + fight run logs/batch18: frame non-blank, fight sec 110-139 avg 27.6 fps, GS ~610-660 ms/s (before ~25-27 fps, GS ~636). Note tools/build_tests.cmd ignores TEKKEN4_SRC (always external\PS2Recomp). Next: gs-review-fixes, then jump-tables merge.
+- sound-run (report only): changes still unmerged in external/PS2Recomp (IOP heap now top-down from HeapLimit so ps2_sif_dma_tests:203 passes, 478/478; sound_engine reverb + movie PCM; overrides hook). Open: char-select 20 s digital silence, WAV shorter than wall clock, heap direction is process-wide and untested without TEKKEN4_SOUND.
+- iop-sched (report only): patch logs/grok/iop-sched_20261022_070303.patch, 477 tests pass, fight 24.8 -> 27.4 fps paired, kernel leaf cost 9% -> ~3%. Open: "no ready thread until cycle X" cache in iop_emulator.cpp (runCycles ~1e7/s kernel entries). Not merged.
+- fight-visuals (report only): Kazuya difference is mostly costume: ours stays 1P (white gi) after Cross while PCSX2 switches to 2P (blue shirt); our pad Cross may not reach the costume select. GS dump shows body prims MODULATE PSMT8, no global blowout (dark groups mean ~58). No renderer bug proven.

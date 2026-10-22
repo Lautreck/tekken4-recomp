@@ -798,3 +798,12 @@ The user pre-authorized publishing every successful milestone on three channels:
 - sound-run (report only): changes still unmerged in external/PS2Recomp (IOP heap now top-down from HeapLimit so ps2_sif_dma_tests:203 passes, 478/478; sound_engine reverb + movie PCM; overrides hook). Open: char-select 20 s digital silence, WAV shorter than wall clock, heap direction is process-wide and untested without TEKKEN4_SOUND.
 - iop-sched (report only): patch logs/grok/iop-sched_20261022_070303.patch, 477 tests pass, fight 24.8 -> 27.4 fps paired, kernel leaf cost 9% -> ~3%. Open: "no ready thread until cycle X" cache in iop_emulator.cpp (runCycles ~1e7/s kernel entries). Not merged.
 - fight-visuals (report only): Kazuya difference is mostly costume: ours stays 1P (white gi) after Cross while PCSX2 switches to 2P (blue shirt); our pad Cross may not reach the costume select. GS dump shows body prims MODULATE PSMT8, no global blowout (dark groups mean ~58). No renderer bug proven.
+
+## Patch 18: GS throughput (Grok gs-throughput, reviewed 2026-10-22 by grok-review)
+- patches/18-ps2xRuntime-gs-throughput.patch (tight texture pages, 512-slot CLUT pool, Q-ratio cut, depth-reject before
+  sample, no second Z read, no drain on UploadImage without pixels). Files: gs_cpu_backend.{cpp,h}, ps2_gs_memory.{cpp,h},
+  gs_texture_page_cache.h, ps2_gs_tests.cpp. Applies on HEAD + patches 02-17 (p15check was rebuilt that way; patch 01 is upstream now).
+- Clean tests (external/ps2recomp-p15check, logs/review_p18_tests.txt): 478/478. Clean game run (logs/review_gs3): fight frame at 70s
+  is Kazuya vs Law, normal (frame_stats not blank); fight fps 26 steady (was ~22.9), menu 60. Shots later than ~75 s are not
+  written by the capture (run ends first): use -Shots <= 70.
+- Next: gs-review-fixes (docs/ai/prompts/), then merge jump-tables.

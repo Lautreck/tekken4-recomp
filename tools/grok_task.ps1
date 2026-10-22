@@ -47,7 +47,12 @@ foreach ($e in Get-ChildItem -Force $root | Where-Object { $_.Name -ne ".git" -a
 }
 foreach ($c in "commit", "push", "reset", "checkout", "switch", "restore", "clean", "stash", "rebase", "merge", "apply",
     "am", "rm", "mv", "add", "tag", "branch -d", "branch -D", "worktree") { $deny += "Bash(git ${c}:*)" }
+# No deletion at all (2026-10-22 09:55 the project folder was wiped during four parallel tasks): recursive/forced delete
+# commands are denied; scratch cleanup goes through tools\grok_clean.ps1 (path-checked).
+foreach ($d in "Remove-Item", "ri", "rm", "rmdir", "rd", "del", "erase", "robocopy", "xcopy", "move", "mv", "Move-Item", "mi", "Clear-Content", "Set-Content", "Out-File", "format", "cmd /c rd", "cmd /c rmdir", "cmd /c del", "cmd /c rm", "powershell -Command Remove-Item", "powershell -NoProfile -Command Remove-Item", "pwsh -Command Remove-Item") { $deny += "Bash(${d}:*)" }
+$deny += @("Bash(find:* -delete*)", "Bash(*Remove-Item*)", "Bash(*rmtree*)", "Bash(*rm -rf*)", "Bash(*rd /s*)", "Bash(*rmdir /s*)", "Bash(*[IO.Directory]::Delete*)", "Bash(*Directory.Delete*)")
 # Lessons from the 2026-10-22 morning review of the night's 23 runs (docs/ai/grok-retro.md).
+$rules += " NO DELETE: never delete or move files or folders (rm, rmdir, rd, del, Remove-Item, robocopy, rmtree, any language); to clear YOUR scratch run powershell -File tools\grok_clean.ps1 <path inside logs\grok\ or out\grok-*>; nothing else may be removed."
 $rules += " FINAL: right before your final answer, also write the identical JSON to logs/grok/$Name-final.json " +
     "(the answer survives a hung exit). CHECKS: a check proves something only if it could have failed: before using a " +
     "counter or metric to show 'unchanged', show it is non-zero / moves in a baseline run; never cite a counter that " +

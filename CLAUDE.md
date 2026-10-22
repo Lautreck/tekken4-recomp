@@ -35,3 +35,6 @@ Static recompilation of Tekken 4 (PS2) to a native Windows executable using PS2R
 - One goal per session (one crash, one syscall, one subsystem). Commit after each working step.
 - Addresses in this repo are for SCES-50878 v2.00 only; they do not carry over to NTSC-U/J builds.
 - Run Python on anything under `game/` with `python -I`.
+- Push after every commit (private remote Lautreck/tekken4-recomp): git is the only copy of tools/docs/config/patches/runtime. 
+  Grok tasks may not delete anything (deny rules in tools/grok_task.ps1; scratch cleanup only via tools/grok_clean.ps1).
+  tools/backup_local.ps1 copies ghidra/, logs/, external/PS2Recomp to ~/tekken4-backup (run by grok_start.ps1).

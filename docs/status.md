@@ -661,6 +661,18 @@ Progress (2026-10-21, commits a31b778, fda9e02):
   (`external/ps2recomp-p15check`: upstream HEAD + patches 01-15; reverse-apply / apply there to validate a patch
   stack without the other tasks' in-progress edits; its build_pr_tests.cmd is local).
 
+## Fight camera fixed: SQRT.S operand (patch 16, session 4, 2026-10-22)
+- Grok camera-live (logs/grok/camera-live_20261022_053728.json, logs/grok/camera-live-notes.md): PS2Recomp translated EE
+  SQRT.S as sqrt(fs); the EE encodes SQRT.S fd, ft (radicand in ft, fs = 0). FUN_00253ad0 turned the identity parent
+  into quaternion (0.5,0.5,0.5,0.5), cancelling the camera's bind permutation and leaving its 717-unit boom on world X.
+- **Patch 16** (`patches/16-ps2xRecomp-sqrt-s-uses-ft.patch`, recompiler + translation test): 467/467 on the clean
+  01-16 worktree. Regenerated: 78 files hold SQRT.S, 53 changed (the rest sqrt'd f0 either way).
+- **Verified** (logs/camera_sqrtfix_clean2, clean tree + committed overrides, frame shot frame_92s): normal side view,
+  both fighters full-body (docs/img/fight_camera_fixed.png). Fight 23-28 fps on the shared tree run (was 20-23).
+- Open: Kazuya's suit looks white / very bright: alternate costume or over-bright lighting? Compare with PCSX2.
+- Window captures were blank all night (monitor off, hidden Grok processes): use frame_NNs.bmp
+  (runtime/tekken4_frameshot_overrides.cpp, set by run_capture.ps1) + `python -I tools/bmp_to_png.py <run dir>`.
+
 ## Grok in the pipeline (from 2026-10-21)
 The user added Grok (xAI Grok Build CLI 1.0.62, `C:\Users\pablo\.grok\bin\grok.exe`, signed in with the user's
 grok.com account, default model grok-4.7) as a parallel worker, second opinion and reviewer; it may see everything that

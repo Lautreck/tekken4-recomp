@@ -1,0 +1,144 @@
+diff --git a/ps2xRuntime/include/runtime/gs/ps2_gs_memory.h b/ps2xRuntime/include/runtime/gs/ps2_gs_memory.h
+index c784ff7..9405abf 100644
+--- a/ps2xRuntime/include/runtime/gs/ps2_gs_memory.h
++++ b/ps2xRuntime/include/runtime/gs/ps2_gs_memory.h
+@@ -563,6 +563,17 @@ namespace GSMem
+ 
+ 	void WriteNull(u8* data, u32 bp, u32 bw, u32 x, u32 y, u32 value);
+ 
++	// One host->local transfer in raster order (x across rowWidth, then y+1 at xOrigin).
++	// Same stored bytes as the per-pixel Write* for that psm. A source byte that holds two PSMT4
++	// pixels is consumed whole; the high nibble is stored only when another pixel is still in budget.
++	struct ImageTransferWrite
++	{
++		u32 pixels;
++		u32 bytes;
++	};
++	ImageTransferWrite WriteImageTransfer(u8* data, u32 bp, u32 bw, u8 psm, u32 x, u32 y, u32 xOrigin,
++	                                      u32 rowWidth, const u8* src, u32 srcBytes, u32 pixelBudget);
++
+ 	u32 ReadCT32(u8* data, u32 bp, u32 bw, u32 x, u32 y);
+ 	u32 ReadZ32(u8* data, u32 bp, u32 bw, u32 x, u32 y);
+ 
+diff --git a/ps2xRuntime/src/lib/gs/ps2_gs_memory.cpp b/ps2xRuntime/src/lib/gs/ps2_gs_memory.cpp
+index a8f9fa8..ba58a2d 100644
+--- a/ps2xRuntime/src/lib/gs/ps2_gs_memory.cpp
++++ b/ps2xRuntime/src/lib/gs/ps2_gs_memory.cpp
+@@ -324,6 +324,117 @@ namespace GSMem
+     {
+     }
+ 
++    template<PixelStorageMode PSM>
++    ImageTransferWrite writeImageTransfer(const typename PixelStorageTraits<PSM>::PageLookupTableT& table, u8* data,
++                                          u32 bp, u32 bw, u32 x, u32 y, u32 xOrigin, u32 rowWidth, const u8* src,
++                                          u32 srcBytes, u32 pixelBudget, u32 bytesPerPixel, bool pairNibbles)
++    {
++        ImageTransferWrite wrote{};
++        if (!data || !src || rowWidth == 0u || pixelBudget == 0u)
++            return wrote;
++        u32 col = x >= xOrigin ? x - xOrigin : 0u;
++        if (col >= rowWidth)
++        {
++            col = 0u;
++            x = xOrigin;
++        }
++        auto advance = [&]() {
++            ++wrote.pixels;
++            if (++col == rowWidth)
++            {
++                col = 0u;
++                ++y;
++                x = xOrigin;
++            }
++            else
++            {
++                ++x;
++            }
++        };
++        if (pairNibbles)
++        {
++            (void)bytesPerPixel;
++            while (wrote.pixels < pixelBudget && wrote.bytes < srcBytes)
++            {
++                const u8 packed = src[wrote.bytes++];
++                PixelStorageTraits<PSM>::Write(table, data, bp, bw, x, y, static_cast<u8>(packed & 0x0Fu));
++                advance();
++                if (wrote.pixels >= pixelBudget)
++                    break;
++                PixelStorageTraits<PSM>::Write(table, data, bp, bw, x, y, static_cast<u8>((packed >> 4) & 0x0Fu));
++                advance();
++            }
++            return wrote;
++        }
++        while (wrote.pixels < pixelBudget && srcBytes - wrote.bytes >= bytesPerPixel)
++        {
++            u32 value = 0u;
++            if (bytesPerPixel == 3u)
++            {
++                value = static_cast<u32>(src[wrote.bytes]) | (static_cast<u32>(src[wrote.bytes + 1u]) << 8u) |
++                        (static_cast<u32>(src[wrote.bytes + 2u]) << 16u);
++            }
++            else
++            {
++                std::memcpy(&value, src + wrote.bytes, bytesPerPixel);
++            }
++            wrote.bytes += bytesPerPixel;
++            PixelStorageTraits<PSM>::Write(table, data, bp, bw, x, y,
++                                           static_cast<typename PixelStorageTraits<PSM>::PackedT>(value));
++            advance();
++        }
++        return wrote;
++    }
++
++    ImageTransferWrite WriteImageTransfer(u8* data, u32 bp, u32 bw, u8 psm, u32 x, u32 y, u32 xOrigin, u32 rowWidth,
++                                          const u8* src, u32 srcBytes, u32 pixelBudget)
++    {
++        switch (static_cast<PixelStorageMode>(psm))
++        {
++        case C32:
++            return writeImageTransfer<C32>(PageTableC32, data, bp, bw, x, y, xOrigin, rowWidth, src, srcBytes,
++                                           pixelBudget, 4u, false);
++        case Z32:
++            return writeImageTransfer<Z32>(PageTableZ32, data, bp, bw, x, y, xOrigin, rowWidth, src, srcBytes,
++                                           pixelBudget, 4u, false);
++        case C24:
++            return writeImageTransfer<C24>(PageTableC32, data, bp, bw, x, y, xOrigin, rowWidth, src, srcBytes,
++                                           pixelBudget, 3u, false);
++        case Z24:
++            return writeImageTransfer<Z24>(PageTableZ32, data, bp, bw, x, y, xOrigin, rowWidth, src, srcBytes,
++                                           pixelBudget, 3u, false);
++        case C16:
++            return writeImageTransfer<C16>(PageTableC16, data, bp, bw, x, y, xOrigin, rowWidth, src, srcBytes,
++                                           pixelBudget, 2u, false);
++        case C16S:
++            return writeImageTransfer<C16S>(PageTableC16S, data, bp, bw, x, y, xOrigin, rowWidth, src, srcBytes,
++                                            pixelBudget, 2u, false);
++        case Z16:
++            return writeImageTransfer<Z16>(PageTableZ16, data, bp, bw, x, y, xOrigin, rowWidth, src, srcBytes,
++                                           pixelBudget, 2u, false);
++        case Z16S:
++            return writeImageTransfer<Z16S>(PageTableZ16S, data, bp, bw, x, y, xOrigin, rowWidth, src, srcBytes,
++                                            pixelBudget, 2u, false);
++        case P8:
++            return writeImageTransfer<P8>(PageTableP8, data, bp, bw, x, y, xOrigin, rowWidth, src, srcBytes,
++                                          pixelBudget, 1u, false);
++        case P8H:
++            return writeImageTransfer<P8H>(PageTableC32, data, bp, bw, x, y, xOrigin, rowWidth, src, srcBytes,
++                                           pixelBudget, 1u, false);
++        case P4:
++            return writeImageTransfer<P4>(PageTableP4, data, bp, bw, x, y, xOrigin, rowWidth, src, srcBytes,
++                                          pixelBudget, 1u, true);
++        case P4HL:
++            return writeImageTransfer<P4HL>(PageTableC32, data, bp, bw, x, y, xOrigin, rowWidth, src, srcBytes,
++                                            pixelBudget, 1u, true);
++        case P4HH:
++            return writeImageTransfer<P4HH>(PageTableC32, data, bp, bw, x, y, xOrigin, rowWidth, src, srcBytes,
++                                            pixelBudget, 1u, true);
++        default:
++            return {};
++        }
++    }
++
+     u32 ReadCT32(u8* data, u32 bp, u32 bw, u32 x, u32 y)
+     {
+         return PixelStorageTraits<C32>::Read(PageTableC32, data, bp, bw, x, y);

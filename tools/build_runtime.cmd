@@ -33,9 +33,11 @@ for %%D in ("%~dp0..\game\vu1\micro") do set "VU1DIR=%%~fD"
 if not exist "%VU1DIR%\*.bin" set "VU1DIR="
 if "%TEKKEN4_VU1N%"=="0" set "VU1DIR="
 if defined VU1DIR set "VU1DIR=%VU1DIR:\=/%"
+rem /Z7: debug info in each object, no shared mspdbsrv. With several builds at once (Grok tasks + Claude) /Zi
+rem failed with C1090 "PDB API call failed" (0x6BA / 23) whenever one build's PDB server went away mid-compile.
 rem RelWithDebInfo with full inlining (/Ob2 like Release; CMake's default /Ob1 kept the GS's per-pixel helpers as calls).
 cmake -S "%SRC%" -B "%BUILD%" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
-  "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=/Zi /O2 /Ob2 /DNDEBUG" "-DCMAKE_C_FLAGS_RELWITHDEBINFO=/Zi /O2 /Ob2 /DNDEBUG" ^
+  "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=/Z7 /O2 /Ob2 /DNDEBUG" "-DCMAKE_C_FLAGS_RELWITHDEBINFO=/Z7 /O2 /Ob2 /DNDEBUG" ^
   -DPS2X_BUILD_RECOMP=OFF -DPS2X_BUILD_ANALYZER=OFF -DPS2X_BUILD_TEST=OFF -DPS2X_BUILD_STUDIO=OFF ^
   -DPS2X_ENABLE_AGRESSIVE_LOGS=OFF -DPS2X_ENABLE_RUNTIME_LOGS=ON -DPS2X_ENABLE_IOP_RPC_TRACE=ON ^
   "-DPS2X_VU1_MICROCODE_DIR=%VU1DIR%"

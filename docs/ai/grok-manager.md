@@ -2,6 +2,11 @@
 User (2026-10-22): "one instance of claude that always manages grok ... the communication layer so you can keep working
 on your own things while the other instance does the low token usage observation work".
 
+WATCHING IS FREE (user, 2026-10-22): polling Grok tasks is done by tools/grok_wait_all.ps1, never by an LLM heartbeat.
+Normal budget: `-PollMinutes 1 -Each` (wakes the lead per finished task); low-burn: `-PollMinutes 5` (wakes once when all
+are done). This manager is only for coordination bursts that need judgement (launch/relaunch series, digests); it no
+longer runs a wait loop. "Normal mode keeps every low-burn optimisation that does not slow the work."
+
 WHO: a background Claude subagent (model sonnet) started by the lead session (main) with this file as its prompt plus
 the list of live Grok tasks. Talks only to main (SendMessage to "main"); main talks to the user. Ends with main's
 session; the next lead session restarts it from this file. All state lives in files (logs/grok/, branch grok/wip,

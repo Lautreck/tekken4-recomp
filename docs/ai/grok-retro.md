@@ -46,3 +46,16 @@ Still open (for grok-retro): Grok cannot *judge* its own images/audio beyond "fi
 checks it can run (non-blank, diff vs a reference frame, PSNR; WAV RMS/peak/clipping per window); a metrics script
 (tools/grok_retro.py); verify the watchdog on a real hang; per-task clean source trees so work tasks stop sharing
 (and confounding) one PS2Recomp tree.
+
+Retro-Claude additions (2026-10-22):
+- Also fixed by the lead: parallel MSVC builds failed with C1090 "PDB API call failed" (0x6BA / 23) when one build's
+  mspdbsrv went away; build_runtime.cmd / build_tests.cmd now use /Z7 (commit 813ac0f); each build folder rebuilds fully once.
+- DONE, tested on real files: tools/frame_stats.py (stats + --diff + diff PNG; BMP and PNG agree on frame_40s), tools/wav_stats.py
+  (sound-run-11/out.wav: clipped 1219, longest silence 9.6 s); wired as rules IMAGES (numbers) + AUDIO in grok_task.ps1 (parse ok)
+  and in grok-brief.md COMMANDS. tools/grok_retro.py: night 2026-10-21 22:00-07:00 = 27 result files (lead counted 23), 19 answered,
+  8 not, 6 pids done-without-exit, 84.77 $, 1459 min, mean conf 0.74, 3949 tool execs (53 failed), 11 inference retries.
+  Next retro: `python -I tools/grok_retro.py --since "<start>" --until "<end>"` and compare these totals.
+- PARTLY: tools/grok_tree.ps1 (-Task t | -Diff | -Remove) creates external/wt-<t> = PS2Recomp HEAD + patches/*.patch (skips ones already in
+  HEAD) + baseline commit; tested create/diff/remove. NOT done: wiring into grok_build.cmd / grok_run.ps1 (set TEKKEN4_SRC when the tree
+  exists), checkpoint of the tree diff in grok_task.ps1, switching tasks. Lead turns a task's tree into a patch with -Diff.
+- Still open: watchdog verified on a real hang; tree wiring above.

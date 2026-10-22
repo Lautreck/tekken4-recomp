@@ -19,6 +19,11 @@
 - VU1 generator: `python -I tools/vu1/vu1n_gen.py <out> game/vu1/micro --parts 6`
 - MFIFO ring: `powershell -File tools\mfifo\pcsx2_ring_probe.ps1` (PCSX2 ring+SPR dumps in the fight -> logs/pcsx2_ring_probe);
   `python -I tools/mfifo/ring_scan.py <dump> <base hex>` (list-end patterns), `python -I tools/mfifo/ring_chain.py <ring dump>` (walk tags)
+- judge results by numbers (you cannot see/hear): `python -I tools/bmp_to_png.py <run dir>` (frame_NNs.bmp -> png);
+  `python -I tools/frame_stats.py <frame...>` (size, mean/min/max per channel, % near-white/black, blank flag);
+  `python -I tools/frame_stats.py --diff <ref> <frame> [--thr 16] [--out d.png]` (% pixels differing, mean abs diff, PSNR);
+  `python -I tools/wav_stats.py <wav> [--win 5]` (rms/peak per window, clipped count, longest digital silence, flags).
+  Report these numbers in checks[]; a frame that is not blank and differs from the reference by x% is evidence, "looks fine" is not.
 - reviews / process: docs/ai/reviews/*.json (mutual reviews), `python -I tools/ai/session_digest.py <transcript.jsonl> <out>`
 
 ## ENV (runtime)

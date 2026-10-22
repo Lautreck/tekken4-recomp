@@ -52,7 +52,12 @@ $rules += " FINAL: right before your final answer, also write the identical JSON
     "(the answer survives a hung exit). CHECKS: a check proves something only if it could have failed: before using a " +
     "counter or metric to show 'unchanged', show it is non-zero / moves in a baseline run; never cite a counter that " +
     "read 0 throughout. IMAGES: judge pictures from frame_NNs.bmp (python -I tools/bmp_to_png.py <run dir>), never " +
-    "shot_NNs.png window captures (blank while the monitor is off or from a hidden process). LOW CONF: if conf < 0.6, " +
+    "shot_NNs.png window captures (blank while the monitor is off or from a hidden process). Judge them by numbers: " +
+    "python -I tools/frame_stats.py <frame> (blank flag, per-channel mean, % white/black) and --diff <ref> <frame> " +
+    "(% pixels differing, PSNR; reference = a PCSX2 or earlier-run frame); report those numbers in checks[], never " +
+    "'looks fine'. AUDIO: you cannot hear: judge WAVs with python -I tools/wav_stats.py <wav> (rms/peak per window, " +
+    "clipped count, longest digital silence, flags); report clipped, longest_silence_s and per-window rms in checks[]; " +
+    "compare with a baseline wav when the task is a change. LOW CONF: if conf < 0.6, " +
     "open[0] must name the single next observation that would settle it."
 if ($Mode -eq "ask") {
     # Game / PCSX2 runs hold the run lock and the CPU: only work tasks (and Claude) run them.

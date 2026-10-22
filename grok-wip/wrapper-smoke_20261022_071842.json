@@ -1,0 +1,1 @@
+{"task":"wrapper-smoke","mode":"ask","answer":{"verdict":"smoke ok","conf":1,"facts":[{"c":"smoke","ref":"none","v":true}],"fix":[],"contra":[],"checks":[],"open":[],"files_changed":[]},"files_changed":[],"other_tree_changes":[],"turns":3,"cost_usd":0.109002,"seconds":31,"session":"01a1620c-1c3e-70a3-91e7-c3f9041c0d3b","hung_exit":false}

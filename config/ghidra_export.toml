@@ -348,3 +348,979 @@ skip_count = 0
 uncategorized_count = 4141
 runtime_call_name_count = 656
 runtime_call_source = "embedded_ps2_call_list_snapshot"
+
+# Validated switch tables from logs/grok/jump_tables.toml.
+# address and target are absolute EE VAs. PS2Recomp ignores index.
+[jump_tables]
+[[jump_tables.table]]
+address = "0x30a580"
+entries = [
+  { index = 0, target = "0x196d30" },
+  { index = 1, target = "0x196d40" },
+  { index = 2, target = "0x196d50" },
+  { index = 3, target = "0x196dd8" },
+  { index = 4, target = "0x196d70" },
+  { index = 5, target = "0x196d60" },
+  { index = 6, target = "0x196d88" },
+  { index = 7, target = "0x196d98" },
+  { index = 8, target = "0x196df0" },
+  { index = 9, target = "0x196da8" },
+  { index = 10, target = "0x196df0" },
+  { index = 11, target = "0x196db8" },
+  { index = 12, target = "0x196de8" },
+  { index = 13, target = "0x196dc8" },
+]
+
+[[jump_tables.table]]
+address = "0x30aa80"
+entries = [
+  { index = 0, target = "0x197548" },
+  { index = 1, target = "0x197548" },
+  { index = 2, target = "0x197548" },
+  { index = 3, target = "0x197548" },
+  { index = 4, target = "0x197554" },
+  { index = 5, target = "0x197548" },
+  { index = 6, target = "0x197568" },
+  { index = 7, target = "0x197548" },
+  { index = 8, target = "0x197548" },
+  { index = 9, target = "0x197548" },
+  { index = 10, target = "0x197548" },
+]
+
+[[jump_tables.table]]
+address = "0x30ab70"
+entries = [
+  { index = 0, target = "0x199034" },
+  { index = 1, target = "0x199034" },
+  { index = 2, target = "0x199034" },
+  { index = 3, target = "0x199034" },
+  { index = 4, target = "0x199034" },
+  { index = 5, target = "0x199034" },
+  { index = 6, target = "0x199034" },
+  { index = 7, target = "0x199034" },
+  { index = 8, target = "0x199034" },
+  { index = 9, target = "0x199034" },
+  { index = 10, target = "0x199034" },
+  { index = 11, target = "0x199034" },
+  { index = 12, target = "0x199034" },
+  { index = 13, target = "0x199034" },
+  { index = 14, target = "0x199034" },
+  { index = 15, target = "0x199034" },
+  { index = 16, target = "0x199034" },
+  { index = 17, target = "0x199034" },
+  { index = 18, target = "0x199034" },
+  { index = 19, target = "0x199034" },
+]
+
+[[jump_tables.table]]
+address = "0x30abc0"
+entries = [
+  { index = 0, target = "0x1991c8" },
+  { index = 1, target = "0x1991c8" },
+  { index = 2, target = "0x1990b0" },
+  { index = 3, target = "0x1990b0" },
+  { index = 4, target = "0x19906c" },
+  { index = 5, target = "0x199064" },
+  { index = 6, target = "0x1991b0" },
+  { index = 7, target = "0x1991b8" },
+  { index = 8, target = "0x199274" },
+  { index = 9, target = "0x1990b0" },
+  { index = 10, target = "0x199274" },
+  { index = 11, target = "0x1990b0" },
+  { index = 12, target = "0x1990b0" },
+  { index = 13, target = "0x1990b0" },
+  { index = 14, target = "0x1990b0" },
+  { index = 15, target = "0x1991e0" },
+  { index = 16, target = "0x1991e0" },
+  { index = 17, target = "0x1990b0" },
+  { index = 18, target = "0x1990b0" },
+  { index = 19, target = "0x199274" },
+  { index = 20, target = "0x1990b0" },
+  { index = 21, target = "0x199264" },
+  { index = 22, target = "0x1990b0" },
+  { index = 23, target = "0x1990b0" },
+  { index = 24, target = "0x1990b0" },
+  { index = 25, target = "0x1990b0" },
+  { index = 26, target = "0x1990b0" },
+  { index = 27, target = "0x1990b0" },
+  { index = 28, target = "0x1990b0" },
+  { index = 29, target = "0x1991c8" },
+  { index = 30, target = "0x1990b0" },
+  { index = 31, target = "0x1990b0" },
+  { index = 32, target = "0x1991c8" },
+  { index = 33, target = "0x1991e0" },
+]
+
+[[jump_tables.table]]
+address = "0x30ac50"
+entries = [
+  { index = 0, target = "0x1993b8" },
+  { index = 1, target = "0x1993b8" },
+  { index = 2, target = "0x1993b8" },
+  { index = 3, target = "0x1993b8" },
+  { index = 4, target = "0x1993e8" },
+  { index = 5, target = "0x1993e8" },
+  { index = 6, target = "0x1993b8" },
+  { index = 7, target = "0x1993b8" },
+  { index = 8, target = "0x1993b8" },
+  { index = 9, target = "0x1993b8" },
+  { index = 10, target = "0x1993b8" },
+  { index = 11, target = "0x1993b8" },
+  { index = 12, target = "0x1993b8" },
+  { index = 13, target = "0x1993b8" },
+  { index = 14, target = "0x1993b8" },
+  { index = 15, target = "0x1993e8" },
+  { index = 16, target = "0x1993e8" },
+  { index = 17, target = "0x1993e8" },
+  { index = 18, target = "0x1993e8" },
+  { index = 19, target = "0x1993e8" },
+  { index = 20, target = "0x1993e8" },
+  { index = 21, target = "0x1993b8" },
+  { index = 22, target = "0x1993b8" },
+  { index = 23, target = "0x1993e8" },
+  { index = 24, target = "0x1993e8" },
+  { index = 25, target = "0x1993e8" },
+  { index = 26, target = "0x1993b8" },
+  { index = 27, target = "0x1993b8" },
+  { index = 28, target = "0x1993b8" },
+  { index = 29, target = "0x1993b8" },
+  { index = 30, target = "0x1993b8" },
+  { index = 31, target = "0x1993b8" },
+  { index = 32, target = "0x1993b8" },
+]
+
+[[jump_tables.table]]
+address = "0x30c580"
+entries = [
+  { index = 0, target = "0x1b9d9c" },
+  { index = 1, target = "0x1b9d9c" },
+  { index = 2, target = "0x1b9d9c" },
+  { index = 3, target = "0x1b9ce4" },
+  { index = 4, target = "0x1b9d9c" },
+  { index = 5, target = "0x1b9d9c" },
+  { index = 6, target = "0x1b9d9c" },
+  { index = 7, target = "0x1b9d9c" },
+  { index = 8, target = "0x1b9d9c" },
+  { index = 9, target = "0x1b9d44" },
+  { index = 10, target = "0x1b9d9c" },
+]
+
+[[jump_tables.table]]
+address = "0x30c970"
+entries = [
+  { index = 0, target = "0x1c1714" },
+  { index = 1, target = "0x1c1748" },
+  { index = 2, target = "0x1c1770" },
+  { index = 3, target = "0x1c17a4" },
+  { index = 4, target = "0x1c17d8" },
+  { index = 5, target = "0x1c1880" },
+  { index = 6, target = "0x1c2b4c" },
+  { index = 7, target = "0x1c2b4c" },
+  { index = 8, target = "0x1c2b4c" },
+  { index = 9, target = "0x1c2b4c" },
+  { index = 10, target = "0x1c2b4c" },
+  { index = 11, target = "0x1c2b4c" },
+  { index = 12, target = "0x1c2b4c" },
+  { index = 13, target = "0x1c2b4c" },
+  { index = 14, target = "0x1c18a8" },
+  { index = 15, target = "0x1c18f4" },
+  { index = 16, target = "0x1c19b8" },
+  { index = 17, target = "0x1c1abc" },
+  { index = 18, target = "0x1c1b24" },
+  { index = 19, target = "0x1c1b34" },
+  { index = 20, target = "0x1c1b40" },
+  { index = 21, target = "0x1c1b4c" },
+]
+
+[[jump_tables.table]]
+address = "0x30c9d0"
+entries = [
+  { index = 0, target = "0x1c1854" },
+  { index = 1, target = "0x1c1854" },
+  { index = 2, target = "0x1c186c" },
+  { index = 3, target = "0x1c186c" },
+  { index = 4, target = "0x1c1838" },
+  { index = 5, target = "0x1c1838" },
+  { index = 6, target = "0x1c186c" },
+  { index = 7, target = "0x1c1854" },
+  { index = 8, target = "0x1c1854" },
+  { index = 9, target = "0x1c1838" },
+  { index = 10, target = "0x1c1838" },
+]
+
+[[jump_tables.table]]
+address = "0x30ca00"
+entries = [
+  { index = 0, target = "0x1c1c9c" },
+  { index = 1, target = "0x1c1c5c" },
+  { index = 2, target = "0x1c1c7c" },
+  { index = 3, target = "0x1c1cc8" },
+  { index = 4, target = "0x1c1cf8" },
+  { index = 5, target = "0x1c1d4c" },
+  { index = 6, target = "0x1c1d60" },
+  { index = 7, target = "0x1c1d60" },
+  { index = 8, target = "0x1c1d94" },
+  { index = 9, target = "0x1c2b4c" },
+  { index = 10, target = "0x1c1d18" },
+  { index = 11, target = "0x1c1d38" },
+]
+
+[[jump_tables.table]]
+address = "0x30ca30"
+entries = [
+  { index = 0, target = "0x1c1df8" },
+  { index = 1, target = "0x1c1e20" },
+  { index = 2, target = "0x1c1e48" },
+  { index = 3, target = "0x1c1e70" },
+  { index = 4, target = "0x1c1e98" },
+]
+
+[[jump_tables.table]]
+address = "0x30ca50"
+entries = [
+  { index = 0, target = "0x1c1ee0" },
+  { index = 1, target = "0x1c1ef0" },
+  { index = 2, target = "0x1c1f00" },
+  { index = 3, target = "0x1c1f10" },
+  { index = 4, target = "0x1c1f20" },
+  { index = 5, target = "0x1c1f30" },
+  { index = 6, target = "0x1c1f40" },
+  { index = 7, target = "0x1c1f50" },
+  { index = 8, target = "0x1c1f60" },
+  { index = 9, target = "0x1c1fa0" },
+  { index = 10, target = "0x1c2b4c" },
+  { index = 11, target = "0x1c2b4c" },
+  { index = 12, target = "0x1c2b4c" },
+  { index = 13, target = "0x1c2b4c" },
+  { index = 14, target = "0x1c2b4c" },
+  { index = 15, target = "0x1c2b4c" },
+  { index = 16, target = "0x1c2b4c" },
+  { index = 17, target = "0x1c2b4c" },
+  { index = 18, target = "0x1c2b4c" },
+  { index = 19, target = "0x1c2b4c" },
+  { index = 20, target = "0x1c2b4c" },
+  { index = 21, target = "0x1c2b4c" },
+  { index = 22, target = "0x1c2b4c" },
+  { index = 23, target = "0x1c2b4c" },
+  { index = 24, target = "0x1c2b4c" },
+  { index = 25, target = "0x1c2b4c" },
+  { index = 26, target = "0x1c2b4c" },
+  { index = 27, target = "0x1c2b4c" },
+  { index = 28, target = "0x1c2b4c" },
+  { index = 29, target = "0x1c2b4c" },
+  { index = 30, target = "0x1c2b4c" },
+  { index = 31, target = "0x1c2b4c" },
+  { index = 32, target = "0x1c2b4c" },
+  { index = 33, target = "0x1c1fb8" },
+  { index = 34, target = "0x1c1fc0" },
+  { index = 35, target = "0x1c1fc8" },
+  { index = 36, target = "0x1c2b4c" },
+  { index = 37, target = "0x1c1fd8" },
+  { index = 38, target = "0x1c1fe0" },
+  { index = 39, target = "0x1c1fe8" },
+  { index = 40, target = "0x1c1ff0" },
+  { index = 41, target = "0x1c1ff8" },
+  { index = 42, target = "0x1c2000" },
+  { index = 43, target = "0x1c2008" },
+  { index = 44, target = "0x1c2010" },
+  { index = 45, target = "0x1c2020" },
+  { index = 46, target = "0x1c2030" },
+  { index = 47, target = "0x1c2038" },
+  { index = 48, target = "0x1c2048" },
+  { index = 49, target = "0x1c2080" },
+  { index = 50, target = "0x1c2088" },
+  { index = 51, target = "0x1c2098" },
+  { index = 52, target = "0x1c20a8" },
+  { index = 53, target = "0x1c20b8" },
+  { index = 54, target = "0x1c20c8" },
+  { index = 55, target = "0x1c20d0" },
+  { index = 56, target = "0x1c20d8" },
+  { index = 57, target = "0x1c20e8" },
+  { index = 58, target = "0x1c20f0" },
+  { index = 59, target = "0x1c20f8" },
+  { index = 60, target = "0x1c2108" },
+  { index = 61, target = "0x1c2058" },
+  { index = 62, target = "0x1c2060" },
+  { index = 63, target = "0x1c2070" },
+  { index = 64, target = "0x1c2118" },
+  { index = 65, target = "0x1c2120" },
+  { index = 66, target = "0x1c2130" },
+  { index = 67, target = "0x1c2140" },
+  { index = 68, target = "0x1c2150" },
+  { index = 69, target = "0x1c2b4c" },
+  { index = 70, target = "0x1c2160" },
+  { index = 71, target = "0x1c2168" },
+  { index = 72, target = "0x1c2170" },
+  { index = 73, target = "0x1c2178" },
+  { index = 74, target = "0x1c2190" },
+  { index = 75, target = "0x1c2180" },
+  { index = 76, target = "0x1c2198" },
+  { index = 77, target = "0x1c21a0" },
+  { index = 78, target = "0x1c21a8" },
+  { index = 79, target = "0x1c21f0" },
+  { index = 80, target = "0x1c21f8" },
+  { index = 81, target = "0x1c2200" },
+  { index = 82, target = "0x1c21b0" },
+  { index = 83, target = "0x1c21b8" },
+  { index = 84, target = "0x1c21c0" },
+  { index = 85, target = "0x1c21c8" },
+  { index = 86, target = "0x1c21d8" },
+  { index = 87, target = "0x1c23b0" },
+  { index = 88, target = "0x1c23b8" },
+  { index = 89, target = "0x1c23c0" },
+  { index = 90, target = "0x1c23c8" },
+  { index = 91, target = "0x1c2450" },
+  { index = 92, target = "0x1c2458" },
+  { index = 93, target = "0x1c2460" },
+  { index = 94, target = "0x1c2468" },
+  { index = 95, target = "0x1c2470" },
+  { index = 96, target = "0x1c247c" },
+  { index = 97, target = "0x1c24a0" },
+  { index = 98, target = "0x1c24b0" },
+  { index = 99, target = "0x1c24c0" },
+  { index = 100, target = "0x1c24cc" },
+  { index = 101, target = "0x1c24d8" },
+  { index = 102, target = "0x1c2500" },
+  { index = 103, target = "0x1c2514" },
+  { index = 104, target = "0x1c2488" },
+  { index = 105, target = "0x1c25ec" },
+  { index = 106, target = "0x1c25f4" },
+  { index = 107, target = "0x1c2604" },
+  { index = 108, target = "0x1c260c" },
+  { index = 109, target = "0x1c2534" },
+  { index = 110, target = "0x1c25dc" },
+  { index = 111, target = "0x1c25c0" },
+  { index = 112, target = "0x1c25e4" },
+  { index = 113, target = "0x1c261c" },
+  { index = 114, target = "0x1c2638" },
+  { index = 115, target = "0x1c267c" },
+  { index = 116, target = "0x1c268c" },
+  { index = 117, target = "0x1c2770" },
+  { index = 118, target = "0x1c26a4" },
+  { index = 119, target = "0x1c2748" },
+  { index = 120, target = "0x1c2758" },
+  { index = 121, target = "0x1c26e8" },
+  { index = 122, target = "0x1c2724" },
+  { index = 123, target = "0x1c2b4c" },
+  { index = 124, target = "0x1c2b4c" },
+  { index = 125, target = "0x1c278c" },
+  { index = 126, target = "0x1c2b4c" },
+  { index = 127, target = "0x1c279c" },
+  { index = 128, target = "0x1c27b8" },
+  { index = 129, target = "0x1c27d8" },
+  { index = 130, target = "0x1c27e8" },
+  { index = 131, target = "0x1c27f4" },
+  { index = 132, target = "0x1c2208" },
+  { index = 133, target = "0x1c22d4" },
+  { index = 134, target = "0x1c23a0" },
+  { index = 135, target = "0x1c23a8" },
+  { index = 136, target = "0x1c2804" },
+  { index = 137, target = "0x1c280c" },
+  { index = 138, target = "0x1c2834" },
+  { index = 139, target = "0x1c2848" },
+  { index = 140, target = "0x1c285c" },
+  { index = 141, target = "0x1c2870" },
+  { index = 142, target = "0x1c2878" },
+  { index = 143, target = "0x1c2880" },
+  { index = 144, target = "0x1c28b0" },
+  { index = 145, target = "0x1c2888" },
+  { index = 146, target = "0x1c2890" },
+  { index = 147, target = "0x1c28a8" },
+  { index = 148, target = "0x1c2898" },
+  { index = 149, target = "0x1c28dc" },
+  { index = 150, target = "0x1c28e4" },
+  { index = 151, target = "0x1c28ec" },
+  { index = 152, target = "0x1c28f4" },
+  { index = 153, target = "0x1c28fc" },
+  { index = 154, target = "0x1c2914" },
+  { index = 155, target = "0x1c292c" },
+  { index = 156, target = "0x1c2944" },
+  { index = 157, target = "0x1c295c" },
+  { index = 158, target = "0x1c2964" },
+  { index = 159, target = "0x1c296c" },
+  { index = 160, target = "0x1c2984" },
+  { index = 161, target = "0x1c29a0" },
+  { index = 162, target = "0x1c29bc" },
+  { index = 163, target = "0x1c29d8" },
+  { index = 164, target = "0x1c29f8" },
+  { index = 165, target = "0x1c2a18" },
+  { index = 166, target = "0x1c2a2c" },
+  { index = 167, target = "0x1c2a08" },
+  { index = 168, target = "0x1c2a3c" },
+  { index = 169, target = "0x1c2a58" },
+  { index = 170, target = "0x1c2a60" },
+  { index = 171, target = "0x1c2b4c" },
+  { index = 172, target = "0x1c2b4c" },
+  { index = 173, target = "0x1c2b4c" },
+  { index = 174, target = "0x1c2b4c" },
+  { index = 175, target = "0x1c2b4c" },
+  { index = 176, target = "0x1c2b4c" },
+  { index = 177, target = "0x1c2b4c" },
+  { index = 178, target = "0x1c2b4c" },
+  { index = 179, target = "0x1c2b4c" },
+  { index = 180, target = "0x1c2b4c" },
+  { index = 181, target = "0x1c2b4c" },
+  { index = 182, target = "0x1c2b4c" },
+  { index = 183, target = "0x1c2b4c" },
+  { index = 184, target = "0x1c2b4c" },
+  { index = 185, target = "0x1c2b4c" },
+  { index = 186, target = "0x1c2b4c" },
+  { index = 187, target = "0x1c2b4c" },
+  { index = 188, target = "0x1c2b4c" },
+  { index = 189, target = "0x1c2adc" },
+  { index = 190, target = "0x1c2af0" },
+]
+
+[[jump_tables.table]]
+address = "0x30dfe0"
+entries = [
+  { index = 0, target = "0x1de0bc" },
+  { index = 1, target = "0x1de098" },
+  { index = 2, target = "0x1dddc4" },
+  { index = 3, target = "0x1dddd0" },
+  { index = 4, target = "0x1dde10" },
+  { index = 5, target = "0x1ddecc" },
+  { index = 6, target = "0x1ddf18" },
+  { index = 7, target = "0x1de01c" },
+  { index = 8, target = "0x1de044" },
+  { index = 9, target = "0x1de070" },
+  { index = 10, target = "0x1de098" },
+]
+
+[[jump_tables.table]]
+address = "0x30e780"
+entries = [
+  { index = 0, target = "0x1e1d00" },
+  { index = 1, target = "0x1e1c9c" },
+  { index = 2, target = "0x1e1d88" },
+  { index = 3, target = "0x1e1d88" },
+  { index = 4, target = "0x1e1cbc" },
+  { index = 5, target = "0x1e1d88" },
+  { index = 6, target = "0x1e1d88" },
+  { index = 7, target = "0x1e1d88" },
+  { index = 8, target = "0x1e1d28" },
+  { index = 9, target = "0x1e1ce0" },
+]
+
+[[jump_tables.table]]
+address = "0x30ffb0"
+entries = [
+  { index = 0, target = "0x1e4d0c" },
+  { index = 1, target = "0x1e4d0c" },
+  { index = 2, target = "0x1e4d0c" },
+  { index = 3, target = "0x1e4cf4" },
+  { index = 4, target = "0x1e4d38" },
+  { index = 5, target = "0x1e4d0c" },
+  { index = 6, target = "0x1e4d0c" },
+  { index = 7, target = "0x1e4ccc" },
+  { index = 8, target = "0x1e4ccc" },
+  { index = 9, target = "0x1e4d0c" },
+  { index = 10, target = "0x1e4d0c" },
+]
+
+[[jump_tables.table]]
+address = "0x310180"
+entries = [
+  { index = 0, target = "0x1e6e44" },
+  { index = 1, target = "0x1e6e44" },
+  { index = 2, target = "0x1e6e44" },
+  { index = 3, target = "0x1e6e2c" },
+  { index = 4, target = "0x1e6e70" },
+  { index = 5, target = "0x1e6e44" },
+  { index = 6, target = "0x1e6e44" },
+  { index = 7, target = "0x1e6e04" },
+  { index = 8, target = "0x1e6e04" },
+  { index = 9, target = "0x1e6e44" },
+  { index = 10, target = "0x1e6e44" },
+]
+
+[[jump_tables.table]]
+address = "0x310c80"
+entries = [
+  { index = 0, target = "0x1f2644" },
+  { index = 1, target = "0x1f26b0" },
+  { index = 2, target = "0x1f269c" },
+  { index = 3, target = "0x1f269c" },
+  { index = 4, target = "0x1f269c" },
+  { index = 5, target = "0x1f269c" },
+  { index = 6, target = "0x1f26b0" },
+  { index = 7, target = "0x1f265c" },
+  { index = 8, target = "0x1f26b0" },
+  { index = 9, target = "0x1f26b0" },
+  { index = 10, target = "0x1f26b0" },
+  { index = 11, target = "0x1f269c" },
+]
+
+[[jump_tables.table]]
+address = "0x310cb0"
+entries = [
+  { index = 0, target = "0x1f4124" },
+  { index = 1, target = "0x1f4124" },
+  { index = 2, target = "0x1f4178" },
+  { index = 3, target = "0x1f4178" },
+  { index = 4, target = "0x1f4178" },
+  { index = 5, target = "0x1f4178" },
+  { index = 6, target = "0x1f4178" },
+  { index = 7, target = "0x1f41d0" },
+  { index = 8, target = "0x1f4134" },
+  { index = 9, target = "0x1f4184" },
+  { index = 10, target = "0x1f41d8" },
+  { index = 11, target = "0x1f41d8" },
+  { index = 12, target = "0x1f4178" },
+  { index = 13, target = "0x1f4178" },
+]
+
+[[jump_tables.table]]
+address = "0x310cf0"
+entries = [
+  { index = 0, target = "0x1f429c" },
+  { index = 1, target = "0x1f42b4" },
+  { index = 2, target = "0x1f42e4" },
+  { index = 3, target = "0x1f43fc" },
+  { index = 4, target = "0x1f44a8" },
+  { index = 5, target = "0x1f4580" },
+  { index = 6, target = "0x1f459c" },
+  { index = 7, target = "0x1f46ac" },
+]
+
+[[jump_tables.table]]
+address = "0x310d10"
+entries = [
+  { index = 0, target = "0x1f47bc" },
+  { index = 1, target = "0x1f47cc" },
+  { index = 2, target = "0x1f47f4" },
+  { index = 3, target = "0x1f4888" },
+  { index = 4, target = "0x1f4914" },
+  { index = 5, target = "0x1f49a0" },
+  { index = 6, target = "0x1f49b4" },
+  { index = 7, target = "0x1f4a10" },
+]
+
+[[jump_tables.table]]
+address = "0x310d40"
+entries = [
+  { index = 0, target = "0x1f5720" },
+  { index = 1, target = "0x1f5720" },
+  { index = 2, target = "0x1f5788" },
+  { index = 3, target = "0x1f5788" },
+  { index = 4, target = "0x1f5788" },
+  { index = 5, target = "0x1f5788" },
+  { index = 6, target = "0x1f5788" },
+  { index = 7, target = "0x1f57e0" },
+  { index = 8, target = "0x1f5730" },
+  { index = 9, target = "0x1f5798" },
+  { index = 10, target = "0x1f57ec" },
+  { index = 11, target = "0x1f57ec" },
+  { index = 12, target = "0x1f5788" },
+  { index = 13, target = "0x1f5788" },
+]
+
+[[jump_tables.table]]
+address = "0x310d80"
+entries = [
+  { index = 0, target = "0x1f5828" },
+  { index = 1, target = "0x1f5850" },
+  { index = 2, target = "0x1f5910" },
+  { index = 3, target = "0x1f5b1c" },
+  { index = 4, target = "0x1f5b30" },
+  { index = 5, target = "0x1f5ba0" },
+]
+
+[[jump_tables.table]]
+address = "0x311140"
+entries = [
+  { index = 0, target = "0x1f87d0" },
+  { index = 1, target = "0x1f8814" },
+  { index = 2, target = "0x1f884c" },
+  { index = 3, target = "0x1f8960" },
+  { index = 4, target = "0x1f8b38" },
+  { index = 5, target = "0x1f8c94" },
+]
+
+[[jump_tables.table]]
+address = "0x3142c0"
+entries = [
+  { index = 0, target = "0x215ad8" },
+  { index = 1, target = "0x21573c" },
+  { index = 2, target = "0x2159ac" },
+  { index = 3, target = "0x215abc" },
+  { index = 4, target = "0x215ad8" },
+  { index = 5, target = "0x215ad8" },
+]
+
+[[jump_tables.table]]
+address = "0x3142e0"
+entries = [
+  { index = 0, target = "0x2157c8" },
+  { index = 1, target = "0x2158d8" },
+  { index = 2, target = "0x2157ec" },
+  { index = 3, target = "0x215810" },
+  { index = 4, target = "0x2158ac" },
+  { index = 5, target = "0x2158d8" },
+  { index = 6, target = "0x2158d8" },
+  { index = 7, target = "0x215810" },
+]
+
+[[jump_tables.table]]
+address = "0x31cb80"
+entries = [
+  { index = 0, target = "0x221bac" },
+  { index = 1, target = "0x221e44" },
+  { index = 2, target = "0x221e44" },
+  { index = 3, target = "0x221e44" },
+  { index = 4, target = "0x221e44" },
+  { index = 5, target = "0x221e44" },
+  { index = 6, target = "0x221e44" },
+  { index = 7, target = "0x221e44" },
+  { index = 8, target = "0x221e44" },
+  { index = 9, target = "0x221e44" },
+  { index = 10, target = "0x221e44" },
+  { index = 11, target = "0x221e44" },
+  { index = 12, target = "0x221e44" },
+  { index = 13, target = "0x221e44" },
+  { index = 14, target = "0x221e44" },
+  { index = 15, target = "0x221e44" },
+  { index = 16, target = "0x221c58" },
+  { index = 17, target = "0x221c94" },
+  { index = 18, target = "0x221cd0" },
+  { index = 19, target = "0x221e44" },
+  { index = 20, target = "0x221e44" },
+  { index = 21, target = "0x221e44" },
+  { index = 22, target = "0x221e44" },
+  { index = 23, target = "0x221e44" },
+  { index = 24, target = "0x221e44" },
+  { index = 25, target = "0x221e44" },
+  { index = 26, target = "0x221e44" },
+  { index = 27, target = "0x221e44" },
+  { index = 28, target = "0x221e44" },
+  { index = 29, target = "0x221e44" },
+  { index = 30, target = "0x221e44" },
+  { index = 31, target = "0x221e44" },
+  { index = 32, target = "0x221d18" },
+  { index = 33, target = "0x221e44" },
+  { index = 34, target = "0x221e44" },
+  { index = 35, target = "0x221d40" },
+  { index = 36, target = "0x221d98" },
+  { index = 37, target = "0x221e44" },
+  { index = 38, target = "0x221e44" },
+  { index = 39, target = "0x221e44" },
+  { index = 40, target = "0x221e44" },
+  { index = 41, target = "0x221e44" },
+  { index = 42, target = "0x221e44" },
+  { index = 43, target = "0x221e44" },
+  { index = 44, target = "0x221e44" },
+  { index = 45, target = "0x221e44" },
+  { index = 46, target = "0x221e44" },
+  { index = 47, target = "0x221e44" },
+  { index = 48, target = "0x221df8" },
+]
+
+[[jump_tables.table]]
+address = "0x3212a0"
+entries = [
+  { index = 0, target = "0x22b8d4" },
+  { index = 1, target = "0x22b894" },
+  { index = 2, target = "0x22b8d4" },
+  { index = 3, target = "0x22b8a4" },
+  { index = 4, target = "0x22b8b4" },
+  { index = 5, target = "0x22b8c4" },
+  { index = 6, target = "0x22b8c4" },
+  { index = 7, target = "0x22b8c4" },
+]
+
+[[jump_tables.table]]
+address = "0x3221f0"
+entries = [
+  { index = 0, target = "0x18cefc" },
+  { index = 1, target = "0x18d0d8" },
+  { index = 2, target = "0x18d114" },
+  { index = 3, target = "0x18d150" },
+  { index = 4, target = "0x18d188" },
+  { index = 5, target = "0x18d19c" },
+  { index = 6, target = "0x18d1a8" },
+]
+
+[[jump_tables.table]]
+address = "0x322210"
+entries = [
+  { index = 0, target = "0x18d0c0" },
+  { index = 1, target = "0x18cf50" },
+  { index = 2, target = "0x18d0c0" },
+  { index = 3, target = "0x18d0c0" },
+  { index = 4, target = "0x18d0c0" },
+  { index = 5, target = "0x18cf68" },
+  { index = 6, target = "0x18d0c0" },
+  { index = 7, target = "0x18d0c0" },
+  { index = 8, target = "0x18d014" },
+  { index = 9, target = "0x18d014" },
+  { index = 10, target = "0x18d014" },
+  { index = 11, target = "0x18d014" },
+  { index = 12, target = "0x18d014" },
+  { index = 13, target = "0x18d014" },
+  { index = 14, target = "0x18d014" },
+  { index = 15, target = "0x18d014" },
+  { index = 16, target = "0x18d0c0" },
+  { index = 17, target = "0x18d0c0" },
+  { index = 18, target = "0x18d014" },
+  { index = 19, target = "0x18d0c0" },
+  { index = 20, target = "0x18cf70" },
+  { index = 21, target = "0x18cf70" },
+  { index = 22, target = "0x18d014" },
+  { index = 23, target = "0x18cf70" },
+  { index = 24, target = "0x18d014" },
+  { index = 25, target = "0x18d014" },
+  { index = 26, target = "0x18d014" },
+  { index = 27, target = "0x18d014" },
+  { index = 28, target = "0x18d014" },
+  { index = 29, target = "0x18d014" },
+  { index = 30, target = "0x18d014" },
+  { index = 31, target = "0x18d014" },
+  { index = 32, target = "0x18cfbc" },
+  { index = 33, target = "0x18d014" },
+  { index = 34, target = "0x18d014" },
+  { index = 35, target = "0x18d014" },
+  { index = 36, target = "0x18d014" },
+  { index = 37, target = "0x18d014" },
+  { index = 38, target = "0x18d014" },
+  { index = 39, target = "0x18d014" },
+  { index = 40, target = "0x18d014" },
+  { index = 41, target = "0x18d014" },
+  { index = 42, target = "0x18d014" },
+  { index = 43, target = "0x18d014" },
+  { index = 44, target = "0x18d014" },
+  { index = 45, target = "0x18d014" },
+  { index = 46, target = "0x18d014" },
+  { index = 47, target = "0x18d014" },
+  { index = 48, target = "0x18cfc8" },
+  { index = 49, target = "0x18cfd0" },
+  { index = 50, target = "0x18d014" },
+  { index = 51, target = "0x18d014" },
+  { index = 52, target = "0x18d014" },
+  { index = 53, target = "0x18d014" },
+  { index = 54, target = "0x18d014" },
+  { index = 55, target = "0x18d014" },
+  { index = 56, target = "0x18d014" },
+  { index = 57, target = "0x18d014" },
+  { index = 58, target = "0x18d014" },
+  { index = 59, target = "0x18d014" },
+  { index = 60, target = "0x18d014" },
+  { index = 61, target = "0x18d014" },
+  { index = 62, target = "0x18d014" },
+  { index = 63, target = "0x18d014" },
+  { index = 64, target = "0x18d014" },
+  { index = 65, target = "0x18d014" },
+  { index = 66, target = "0x18d014" },
+  { index = 67, target = "0x18d014" },
+  { index = 68, target = "0x18d014" },
+  { index = 69, target = "0x18d014" },
+  { index = 70, target = "0x18d014" },
+  { index = 71, target = "0x18d014" },
+  { index = 72, target = "0x18d014" },
+  { index = 73, target = "0x18d014" },
+  { index = 74, target = "0x18cfe4" },
+  { index = 75, target = "0x18d014" },
+  { index = 76, target = "0x18d014" },
+  { index = 77, target = "0x18d014" },
+  { index = 78, target = "0x18d014" },
+  { index = 79, target = "0x18d014" },
+  { index = 80, target = "0x18cffc" },
+  { index = 81, target = "0x18cffc" },
+]
+
+[[jump_tables.table]]
+address = "0x32bb60"
+entries = [
+  { index = 0, target = "0x24661c" },
+  { index = 1, target = "0x24661c" },
+  { index = 2, target = "0x246624" },
+  { index = 3, target = "0x246624" },
+  { index = 4, target = "0x246624" },
+  { index = 5, target = "0x246624" },
+  { index = 6, target = "0x246624" },
+  { index = 7, target = "0x246624" },
+  { index = 8, target = "0x246624" },
+  { index = 9, target = "0x246624" },
+  { index = 10, target = "0x246624" },
+  { index = 11, target = "0x246624" },
+  { index = 12, target = "0x24661c" },
+  { index = 13, target = "0x24661c" },
+  { index = 14, target = "0x246624" },
+  { index = 15, target = "0x246624" },
+  { index = 16, target = "0x246624" },
+  { index = 17, target = "0x246624" },
+  { index = 18, target = "0x246624" },
+  { index = 19, target = "0x246624" },
+  { index = 20, target = "0x24661c" },
+  { index = 21, target = "0x24661c" },
+  { index = 22, target = "0x24661c" },
+  { index = 23, target = "0x24661c" },
+  { index = 24, target = "0x246624" },
+  { index = 25, target = "0x246624" },
+  { index = 26, target = "0x246624" },
+  { index = 27, target = "0x246624" },
+  { index = 28, target = "0x246624" },
+  { index = 29, target = "0x24661c" },
+  { index = 30, target = "0x246624" },
+  { index = 31, target = "0x246624" },
+  { index = 32, target = "0x246624" },
+  { index = 33, target = "0x246624" },
+  { index = 34, target = "0x246624" },
+  { index = 35, target = "0x246624" },
+  { index = 36, target = "0x246624" },
+  { index = 37, target = "0x246624" },
+  { index = 38, target = "0x246624" },
+  { index = 39, target = "0x246624" },
+  { index = 40, target = "0x246624" },
+  { index = 41, target = "0x246624" },
+  { index = 42, target = "0x246624" },
+  { index = 43, target = "0x246624" },
+  { index = 44, target = "0x246624" },
+  { index = 45, target = "0x246624" },
+  { index = 46, target = "0x246624" },
+  { index = 47, target = "0x246624" },
+  { index = 48, target = "0x246624" },
+  { index = 49, target = "0x246624" },
+  { index = 50, target = "0x246624" },
+  { index = 51, target = "0x246624" },
+  { index = 52, target = "0x246624" },
+  { index = 53, target = "0x246624" },
+  { index = 54, target = "0x246624" },
+  { index = 55, target = "0x246624" },
+  { index = 56, target = "0x24661c" },
+  { index = 57, target = "0x24661c" },
+]
+
+[[jump_tables.table]]
+address = "0x32cbc0"
+entries = [
+  { index = 0, target = "0x18444c" },
+  { index = 1, target = "0x1843cc" },
+  { index = 2, target = "0x1843cc" },
+  { index = 3, target = "0x18444c" },
+  { index = 4, target = "0x1843cc" },
+  { index = 5, target = "0x1843cc" },
+  { index = 6, target = "0x18444c" },
+  { index = 7, target = "0x1843cc" },
+  { index = 8, target = "0x1843cc" },
+  { index = 9, target = "0x18444c" },
+  { index = 10, target = "0x1843cc" },
+  { index = 11, target = "0x1843cc" },
+  { index = 12, target = "0x18444c" },
+  { index = 13, target = "0x1843cc" },
+  { index = 14, target = "0x1843cc" },
+]
+
+[[jump_tables.table]]
+address = "0x32f350"
+entries = [
+  { index = 0, target = "0x268c20" },
+  { index = 1, target = "0x268c20" },
+  { index = 2, target = "0x268c28" },
+  { index = 3, target = "0x268c20" },
+  { index = 4, target = "0x268c20" },
+]
+
+[[jump_tables.table]]
+address = "0x32f370"
+entries = [
+  { index = 0, target = "0x269158" },
+  { index = 1, target = "0x269170" },
+  { index = 2, target = "0x2691a0" },
+  { index = 3, target = "0x269188" },
+  { index = 4, target = "0x2691b8" },
+  { index = 5, target = "0x2691d0" },
+]
+
+[[jump_tables.table]]
+address = "0x32fa80"
+entries = [
+  { index = 0, target = "0x274e48" },
+  { index = 1, target = "0x274e54" },
+  { index = 2, target = "0x274e88" },
+  { index = 3, target = "0x274e94" },
+  { index = 4, target = "0x274ec8" },
+]
+
+[[jump_tables.table]]
+address = "0x32faa0"
+entries = [
+  { index = 0, target = "0x274f2c" },
+  { index = 1, target = "0x274f38" },
+  { index = 2, target = "0x274f6c" },
+  { index = 3, target = "0x274f78" },
+  { index = 4, target = "0x274fac" },
+]
+
+[[jump_tables.table]]
+address = "0x32fac0"
+entries = [
+  { index = 0, target = "0x275020" },
+  { index = 1, target = "0x275048" },
+  { index = 2, target = "0x275070" },
+  { index = 3, target = "0x2750cc" },
+  { index = 4, target = "0x2750f4" },
+  { index = 5, target = "0x275150" },
+]
+
+[[jump_tables.table]]
+address = "0x32fae0"
+entries = [
+  { index = 0, target = "0x2753ec" },
+  { index = 1, target = "0x275438" },
+  { index = 2, target = "0x275484" },
+  { index = 3, target = "0x2754e8" },
+  { index = 4, target = "0x275518" },
+  { index = 5, target = "0x275548" },
+  { index = 6, target = "0x275578" },
+  { index = 7, target = "0x2755a0" },
+]
+
+[[jump_tables.table]]
+address = "0x32fb00"
+entries = [
+  { index = 0, target = "0x275410" },
+  { index = 1, target = "0x275418" },
+  { index = 2, target = "0x275420" },
+  { index = 3, target = "0x275428" },
+  { index = 4, target = "0x275430" },
+]
+
+[[jump_tables.table]]
+address = "0x32fb20"
+entries = [
+  { index = 0, target = "0x27545c" },
+  { index = 1, target = "0x275464" },
+  { index = 2, target = "0x27546c" },
+  { index = 3, target = "0x275474" },
+  { index = 4, target = "0x27547c" },
+]
+
+[[jump_tables.table]]
+address = "0x32fb40"
+entries = [
+  { index = 0, target = "0x2754a8" },
+  { index = 1, target = "0x2754b0" },
+  { index = 2, target = "0x2754b8" },
+  { index = 3, target = "0x2754c0" },
+  { index = 4, target = "0x2754c8" },
+  { index = 5, target = "0x2754d0" },
+]
+
+[[jump_tables.table]]
+address = "0x330180"
+entries = [
+  { index = 0, target = "0x280068" },
+  { index = 1, target = "0x2801a8" },
+  { index = 2, target = "0x280268" },
+  { index = 3, target = "0x2802b4" },
+  { index = 4, target = "0x2802d8" },
+  { index = 5, target = "0x2802d8" },
+  { index = 6, target = "0x2802d8" },
+  { index = 7, target = "0x2802d8" },
+  { index = 8, target = "0x280368" },
+  { index = 9, target = "0x280268" },
+  { index = 10, target = "0x280368" },
+  { index = 11, target = "0x280368" },
+  { index = 12, target = "0x280368" },
+  { index = 13, target = "0x280324" },
+]

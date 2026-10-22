@@ -725,6 +725,9 @@ The user pre-authorized publishing every successful milestone on three channels:
 - PR #380 https://github.com/ran-j/PS2Recomp/pull/380 = patch 15 upstream (GIF pass-through on an empty arbiter
   queue + 32-bit UNPACK memcpy), ported by Grok (copies-pr) without MFIFO span reuse / timer scaffold, branch
   `game-thread-copies`, worktree `external/ps2recomp-pr7`, 448/448.
+- PR #381 https://github.com/ran-j/PS2Recomp/pull/381 = patch 13 upstream (open pad port without a controller
+  reads as disconnected), ported by Grok (pad-pr), branch `pad-empty-port-disconnected`, worktree
+  `external/ps2recomp-pr8`, 447/447.
 - **Milestone pages** (private until the user shares them from the page's Share menu): milestone 4 at
   https://claude.ai/artifact/BTDUfBQqwaDsn83wdRh2gf (our runtime screenshot next to PCSX2's), milestone 5 at
   https://claude.ai/artifact/CoN3nkpepFjyn5LSbPEQ7j (menu, PAL60 confirmation, Namco logo; four fixes). Milestone 6 at

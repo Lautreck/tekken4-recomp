@@ -1,0 +1,17 @@
+diff --git a/ps2xIOP/src/emulator/core/iop_memory.h b/ps2xIOP/src/emulator/core/iop_memory.h
+index a932a5d..6199dce 100644
+--- a/ps2xIOP/src/emulator/core/iop_memory.h
++++ b/ps2xIOP/src/emulator/core/iop_memory.h
+@@ -22,7 +22,11 @@ namespace ps2x::iop::detail
+         static constexpr uint32_t Spu2End = 0x1FA00000u;
+         static constexpr uint32_t SifBase = 0x1D000000u;
+         static constexpr uint32_t SifEnd = 0x1D001000u;
+-        static constexpr uint32_t HeapBase = 0x00120000u;
++        // zsiopdrv's init does AllocSysMemory(0xE9400). The old window 0x120000..0x1F0000 is
++        // only 0xD0000, so that call returned 0 and the driver then filled from address 0,
++        // wiping its own code (exception at 0x49958, insn 0xffffffff). 0x80000 still sits
++        // above the six boot IRX (zsiopdrv ends near 0x53000). Call stacks stay at HeapLimit.
++        static constexpr uint32_t HeapBase = 0x00080000u;
+         static constexpr uint32_t HeapLimit = 0x001F0000u;
+ 
+         struct Allocation

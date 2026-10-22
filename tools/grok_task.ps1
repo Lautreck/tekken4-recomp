@@ -47,6 +47,13 @@ foreach ($e in Get-ChildItem -Force $root | Where-Object { $_.Name -ne ".git" -a
 }
 foreach ($c in "commit", "push", "reset", "checkout", "switch", "restore", "clean", "stash", "rebase", "merge", "apply",
     "am", "rm", "mv", "add", "tag", "branch -d", "branch -D", "worktree") { $deny += "Bash(git ${c}:*)" }
+# Lessons from the 2026-10-22 morning review of the night's 23 runs (docs/ai/grok-retro.md).
+$rules += " FINAL: right before your final answer, also write the identical JSON to logs/grok/$Name-final.json " +
+    "(the answer survives a hung exit). CHECKS: a check proves something only if it could have failed: before using a " +
+    "counter or metric to show 'unchanged', show it is non-zero / moves in a baseline run; never cite a counter that " +
+    "read 0 throughout. IMAGES: judge pictures from frame_NNs.bmp (python -I tools/bmp_to_png.py <run dir>), never " +
+    "shot_NNs.png window captures (blank while the monitor is off or from a hidden process). LOW CONF: if conf < 0.6, " +
+    "open[0] must name the single next observation that would settle it."
 if ($Mode -eq "ask") {
     # Game / PCSX2 runs hold the run lock and the CPU: only work tasks (and Claude) run them.
     foreach ($s in "tools\run_capture.ps1", "tools/run_capture.ps1", "tools\pcsx2_capture.ps1", "tools/pcsx2_capture.ps1") {
@@ -61,7 +68,10 @@ if ($Mode -eq "work") {
         "command per tool call, never chain with ; or && or set `$env: inline (headless checks refuse it). " +
         "Otherwise: RUN: powershell -File tools\run_capture.ps1 -RunDir " +
         "logs\grok\$Name-<n> -Keys ... -Shots ... (same build; display-mode menu: always PAL60 = 10:Down,12:Cross). " +
-        "files_changed + checks must list what you changed and how you tested."
+        "files_changed + checks must list what you changed and how you tested. TESTS: after any change to " +
+        "ps2xRuntime/ps2xRecomp/ps2xIOP source run `cmd /c tools\build_tests.cmd` and report total/passed/failed; a " +
+        "failure in a file you do not own: name it, do not fix it. OWNS IS HARD: if the change needs a file not in " +
+        "OWNS, stop and put it in open[] (file + exact change) instead of editing it."
 } else {
     $rules += " MODE: ask. No repository edits."
 }
@@ -89,7 +99,36 @@ $repos = @($root, (Join-Path $root "external\PS2Recomp"))
 $before = @{}
 foreach ($r in $repos) { $before[$r] = @(git -C $r status --short 2>$null) }
 $t0 = Get-Date
-$raw = (& $grok @grokArgs 2>&1 | ForEach-Object { "$_" }) -join "`n"
+# Grok CLI 1.0.62 sometimes finishes (unified log: shell.handle_prompt.done) but never exits, which left tasks "stuck"
+# for hours with their answers lost (2026-10-22 morning review). Run it as a job and watch its log: once its own pid
+# logged handle_prompt.done, give it 90 s to exit, then end it; the answer is also in logs\grok\<Name>-final.json.
+$job = Start-Job -ScriptBlock { param($exe, $argv) (& $exe @argv 2>&1 | ForEach-Object { "$_" }) -join "`n" } -ArgumentList $grok, $grokArgs
+$unified = Join-Path $env:USERPROFILE ".grok\logs\unified.jsonl"
+$grokPid = $null; $doneAt = $null; $hungExit = $false
+while ($job.State -eq 'Running') {
+    Start-Sleep -Seconds 15
+    if (-not $grokPid) {
+        $proc = Get-CimInstance Win32_Process -Filter "Name='grok.exe'" | Where-Object { $_.CommandLine -like "*$promptPath*" } | Select-Object -First 1
+        if ($proc) { $grokPid = $proc.ProcessId }
+    }
+    if ($grokPid -and -not $doneAt -and (Test-Path $unified)) {
+        try {
+            $fs = [System.IO.File]::Open($unified, 'Open', 'Read', 'ReadWrite')
+            try {
+                $take = [int][Math]::Min(524288, $fs.Length)
+                [void]$fs.Seek(-$take, 'End'); $buf = New-Object byte[] $take; [void]$fs.Read($buf, 0, $take)
+            } finally { $fs.Close() }
+            $tail = [System.Text.Encoding]::UTF8.GetString($buf)
+            if ($tail -match ('"pid":\s*' + $grokPid + '\b[^\n]*shell\.handle_prompt\.done')) { $doneAt = Get-Date }
+        } catch { }
+    }
+    if ($doneAt -and ((Get-Date) - $doneAt).TotalSeconds -ge 90 -and (Get-Process -Id $grokPid -ErrorAction SilentlyContinue)) {
+        Stop-Process -Id $grokPid -Force -ErrorAction SilentlyContinue
+        $hungExit = $true
+    }
+}
+$raw = [string](Receive-Job $job -Wait)
+Remove-Job $job -Force
 # text holds one JSON object per assistant turn: the last complete one is the answer.
 $answer = $null; $meta = $null
 try {
@@ -104,6 +143,11 @@ try {
     }
     if ($last) { $answer = $last | ConvertFrom-Json }
 } catch { }
+# No answer on stdout (a hung exit, or a crash): take the copy Grok wrote before answering, if it is from this run.
+$finalPath = Join-Path $logDir ("{0}-final.json" -f $Name)
+if (-not $answer -and (Test-Path $finalPath) -and (Get-Item $finalPath).LastWriteTime -ge $t0) {
+    try { $answer = Get-Content -Raw $finalPath | ConvertFrom-Json } catch { }
+}
 $changed = @()
 foreach ($r in $repos) {
     $rel = if ($r -eq $root) { "" } else { "external/PS2Recomp/" }
@@ -118,6 +162,7 @@ $result = [ordered]@{
     other_tree_changes = $other
     turns = $(if ($meta) { $meta.num_turns }); cost_usd = $(if ($meta) { $meta.total_cost_usd })
     seconds = [int]((Get-Date) - $t0).TotalSeconds; session = $(if ($meta) { $meta.sessionId })
+    hung_exit = $hungExit
 }
 $log = Join-Path $logDir ("{0}_{1}.json" -f $Name, $stamp)
 [System.IO.File]::WriteAllText($log, ($result | ConvertTo-Json -Depth 12 -Compress), (New-Object System.Text.UTF8Encoding $false))

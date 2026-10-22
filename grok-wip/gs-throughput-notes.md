@@ -72,3 +72,29 @@ Per frame at 22 fps: sample ~3, write ~2, upload ~16-20, clut ~0.9, other ~0.7. 
 Shots: gs-throughput-1/3/4/5 shot_40s.png and shot_95s.png are each 6185 bytes. shot_95s.png of throughput-5 is a white PrintWindow client (title bar "PS2-Recomp | SCES_508.78" only). Not pixel evidence. Menu stayed 60 fps on every measured build.
 
 Tests: out/grok/ps2xTest/ps2x_tests.exe, cwd external/PS2Recomp, built by configuring that grok tree with PS2X_BUILD_TEST/RECOMP/ANALYZER=ON (build_tests.cmd not used; it writes out/test). logs/grok/gs-tests-run4.txt: Passed 470, Failed 0, exit 0. Includes "drawing threads leave the same GS memory", "drawing threads keep queued primitives on their texture and CLUT", "UV-tight page marks" (sentinel moved from (900,400) to (900,420): with TBW 10, (x,y) aliases (x-640,y+32), and (260,432) is inside the test's own sprites so the old expected blue was already red before the upload), "a draw into the CLUT buffer", "triangle coverage matches the per-pixel barycentric loop". Runner exe was not relinked (still 02:52:04, length 48935936).
+
+## Step 4 — swizzle address + texel reuse + texture-page cache kept (logs/grok/gs-throughput-6)
+
+Address math is shifts into the small block/column tables (SwizzlePixel) instead of the page-sized LUT. Frame/Z reads and writes call that directly. Texture samples go through ReadThroughCache (8 KiB page copy until TEXFLUSH). A first test build that skipped the cache failed "GS texture page buffer hides local-memory writes until TEXFLUSH"; the cache was put back on the sample path only. Point and bilinear samples reuse the last texel when the integer UV (or the bilinear cell, including a +1 U shift) matches. Present dump: PS2X_GS_FRAME_DUMP writes frame_40.bmp and frame_95.bmp (24-bit).
+
+Tests: cmd /c logs/grok/build_gs_tests.cmd then logs/grok/run_gs_tests.cmd (cwd external/PS2Recomp, exe out/grok/ps2xTest/ps2x_tests.exe). logs/grok/gs-tests-run5.txt: Total 472, Passed 471, Failed 1. Passed: "swizzle pixel index matches the page lookup table", "magnified sprite samples match per-texel colours", "GS texture page buffer hides local-memory writes until TEXFLUSH", "drawing threads leave the same GS memory", "drawing threads keep queued primitives on their texture and CLUT", "triangle coverage matches the per-pixel barycentric loop". The one failure is "IOP heap DMA uses private backing" (ps2xIOP sources are dirty from the other task; not a GS file).
+
+Capture: logs/grok/gs-throughput-6, params started 2026-10-22 05:58:25, commit 9ba7cfa, DRAIN_STATS=1, PERF_LOG=120, FRAME_DUMP=., shots 40,95,105 (105 only so the process is still alive at present-time 95). Exe 05:57:28 length 49015296. CAPTURE ran 105.2 s. No compile during the run.
+
+Menu stdout 95-113: sec 1-10 are 60 fps, GS 267,272,271,272,266,269,268,266,272,268.
+
+Fight stdout 326-333 (prims ~829k, same ~34540 prims/frame as throughput-5's ~760k/22):
+- sec 90: 24 fps, GS 554, prims 829094, other 24, sample 72, write 48, upload 320, clut 24
+- sec 91: 24 fps, GS 558, prims 828930, other 20, sample 72, write 48, upload 299, clut 24
+- sec 92: 24 fps, GS 564, prims 828039, other 22, sample 72, write 48, upload 289, clut 24
+- sec 93: 24 fps, GS 564, prims 828987, other 23, sample 72, write 48, upload 288, clut 24
+Sec 85-89 already 23-24 fps, GS 562-546. Sec 94-99 stay 23-24 fps, GS 552-561.
+
+Versus throughput-5 sec 90-93 (stdout 326-333, re-read): 22 fps, GS 586/586/585/586, sample 65/65/65/66, write 43/43/43/44, upload 454/431/413/352, clut 20/18/19/16, other 15/15/16/17, prims ~760k.
+What it bought: +2 fps (22 to 24), GS ~586 to ~554-564. Sample and write per frame stayed ~3 and ~2 (72/24 and 48/24 vs 65/22 and 43/22). Upload drains fell ~350-450 to ~290-320. The fps is faster workers, not fewer waits. Swizzle and texel reuse are one binary, so the +2 is the sum. The cache skip was rejected by the TEXFLUSH test and is not in this exe.
+
+At 24 fps the frame is 41.7 ms. GS ~556/24 = 23.2 ms, so the rest of the game thread is ~18.5 ms, the same ~18 ms as throughput-5 (586/22 = 26.6 GS, 45.5-26.6 = 18.9). A 16.7 ms frame cannot fit 18.5 ms of non-GS work. Ceiling if GS wait were zero is ~54 fps (1000/18.5).
+
+Contra: this exe also contains runtime/tekken4_overrides.cpp (mtime 04:38:49) and runtime/tekken4_camera_overrides.cpp (mtime 04:02:18). throughput-5's exe was 02:52. Prims/frame and non-GS ms/frame match, which is why the GS drop is attributed to the GS edit, but it is not a one-variable rebuild.
+
+Shots shot_40/95/105.png are 6185-byte PrintWindow whites. frame_40.bmp and frame_95.bmp are 860214 bytes (640x448 24-bit). frame_40 is the MODE SELECT menu (ARCADE, Kazuya/Paul portraits, readable text). frame_95 is the Aqua Garden fight (Kazuya vs Law, timer 48, HUD readable). No earlier present dump exists, so there is no byte compare. The fight dump moves with fps. Camera is still too close (arm fills the left). Not fixed here.

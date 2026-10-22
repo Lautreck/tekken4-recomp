@@ -56,8 +56,10 @@ if ($Mode -eq "ask") {
 }
 if ($Mode -eq "work") {
     $rules += " MODE: work. EDIT ONLY: " + ($Owns -join ", ") + " (+ logs/grok/). BUILD: cmd /c tools\build_runtime.cmd " +
-        "(set TEKKEN4_BUILD_DIR=grok-$Name first: your own build folder external\PS2Recomp\out\grok-$Name, never shared " +
-        "with other tasks; keep it set for run_capture too). RUN: powershell -File tools\run_capture.ps1 -RunDir " +
+        "-> prefer `cmd /c tools\grok_build.cmd $Name` (stage + build into your own out\grok-$Name) and " +
+        "`powershell -File tools\grok_run.ps1 -Task $Name -RunDir ... -Keys ... -Shots ... -Env NAME=VALUE`; one simple " +
+        "command per tool call, never chain with ; or && or set `$env: inline (headless checks refuse it). " +
+        "Otherwise: RUN: powershell -File tools\run_capture.ps1 -RunDir " +
         "logs\grok\$Name-<n> -Keys ... -Shots ... (same build; display-mode menu: always PAL60 = 10:Down,12:Cross). " +
         "files_changed + checks must list what you changed and how you tested."
 } else {

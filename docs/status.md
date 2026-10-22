@@ -673,6 +673,14 @@ Progress (2026-10-21, commits a31b778, fda9e02):
 - Window captures were blank all night (monitor off, hidden Grok processes): use frame_NNs.bmp
   (runtime/tekken4_frameshot_overrides.cpp, set by run_capture.ps1) + `python -I tools/bmp_to_png.py <run dir>`.
 
+## EE FPU / VU0 macro semantics (patch 17, session 4, 2026-10-22)
+- Grok fpu-audit (logs/grok/fpu-audit_20261022_062059.json) -> fpu-fixes (logs/grok/fpu-fixes_20261022_065037.json):
+  CVT.W.S chops toward zero with EE saturation (was nearbyintf; 497 sites), macro VCLIP side bits in PCSX2 order (35 vclipw,
+  21 CFC2.CLIP reads), macro FMAC ops write vu0_mac_flags (4 CFC2.MAC reads), VFTOI0/4/12/15 saturate.
+- **Patch 17** (`patches/17-ps2xRecomp-ee-fpu-vu0-macro-semantics.patch`): 471/471 on the clean 01-17 worktree. Regenerated
+  (148 files changed). Fight (logs/fpufix_fight1): 26-29 fps, picture as before (frame_92s.png). No visible change was
+  expected; these fix logic/culling edge cases (float->int truncation everywhere).
+
 ## 60 fps budget (session 4, 2026-10-22)
 - gs-throughput (logs/grok/gs-throughput-notes.md): at 24 fps a fight frame is ~41.7 ms = ~23 ms GS wait + ~18.5 ms of
   other game-thread work. A 60 fps frame is 16.7 ms, so even a zero GS wait caps the fight at ~54 fps: both must go

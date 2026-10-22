@@ -29,8 +29,8 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
 - **Overnight 2026-10-22 (user asleep, wants uninterrupted work):** session-only cron jobs: hourly check at :17, resume at 05:52 after the usage window reset (53% at 01:46). 9 Grok tasks run detached (sound-run, review-patch14, qwc-pr in worktree external/ps2recomp-pr6, jump-tables, memcard, gs-throughput, game-thread done -> game-thread-fixes, usage-meter); grok-manager subagent watches them (digests in logs/grok/digest.md). Camera compare in flight: logs/camera_ours2 (TEKKEN4_CAMERA_LOG) vs logs/pcsx2_camera_probe (tools/pcsx2_camera_probe.ps1). PC power plan: sleep/hibernate never.
 - **Usage meter (2026-10-22):** `python -I tools/usage_meter.py --status` (estimate from transcript token counts,
   calibrated to /usage: `--calibrate PCT --resets HH:MM`). Hooks installed in .claude/settings.local.json
-  (UserPromptSubmit + PostToolUse, one context line per threshold 50/60/70/75/78/85/90/95), **but they load only
-  after the user opens /hooks once or restarts Claude Code** (settings watcher). Recalibrate after each /usage reading.
+  (UserPromptSubmit + PostToolUse, one context line per threshold 50/60/70/75/78/85/90/95); live (the 70% notice
+  arrived on its own at ~04:30). Recalibrate after each /usage reading.
   jump-tables (Grok, logs/grok/jump_tables.toml: 41 tables, unresolved JR 159 -> 142) waits to be merged into
   config/ghidra_export.toml until no Grok work task is building (regenerates generated/ for everyone).
 - **Resume at (2026-10-22 ~01:40, session 4):** fight 18-21 fps after patch 14 (was 9-13, see "GS drawing threads
@@ -722,6 +722,9 @@ The user pre-authorized publishing every successful milestone on three channels:
   override registrations at 0x292900 / 0x292c18 in runtime/tekken4_overrides.cpp (redundant then).
   Memcard (Grok memcard, logs/grok/memcard_20261022.json): no stub bug; saves only run after a menu asks to save
   (UI opcode 16), which no test run reached yet.
+- PR #380 https://github.com/ran-j/PS2Recomp/pull/380 = patch 15 upstream (GIF pass-through on an empty arbiter
+  queue + 32-bit UNPACK memcpy), ported by Grok (copies-pr) without MFIFO span reuse / timer scaffold, branch
+  `game-thread-copies`, worktree `external/ps2recomp-pr7`, 448/448.
 - **Milestone pages** (private until the user shares them from the page's Share menu): milestone 4 at
   https://claude.ai/artifact/BTDUfBQqwaDsn83wdRh2gf (our runtime screenshot next to PCSX2's), milestone 5 at
   https://claude.ai/artifact/CoN3nkpepFjyn5LSbPEQ7j (menu, PAL60 confirmation, Namco logo; four fixes). Milestone 6 at

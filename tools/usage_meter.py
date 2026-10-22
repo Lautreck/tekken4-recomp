@@ -483,12 +483,12 @@ def format_status(start, w5, week, cal, now):
 
 
 def notice_text(kind, pct):
+    # User rule (2026-10-22): only the 5-hour window triggers the 78% hand-off; the weekly figure is information only.
     label = "5-hour" if kind == "5-hour" else "weekly"
-    if pct >= 78:
-        return (
-            f"Usage ~{pct}% of the {label} window (estimate): "
-            "hand off per the 78% rule"
-        )
+    if kind == "5-hour" and pct >= 78:
+        return f"Usage ~{pct}% of the 5-hour window (estimate): hand off per the 78% rule"
+    if kind != "5-hour":
+        return f"Usage ~{pct}% of the weekly window (estimate; information only, no hand-off)."
     return f"Usage ~{pct}% of the {label} window (estimate)."
 
 

@@ -41,13 +41,17 @@ New-Item -ItemType Directory -Force $RunDir | Out-Null
 . (Join-Path $PSScriptRoot "run_lock.ps1")
 Enter-RunLock $root "run_capture $RunDir"
 $buildDir = if ($env:TEKKEN4_BUILD_DIR) { $env:TEKKEN4_BUILD_DIR } else { "runtime" }  # Grok: out\grok
-$exe = Join-Path $root "external\PS2Recomp\out\$buildDir\ps2xRuntime\ps2EntryRunner.exe"
+$srcTree = if ($env:TEKKEN4_SRC) { $env:TEKKEN4_SRC } else { Join-Path $root "external\PS2Recomp" }  # see build_runtime.cmd
+$exe = Join-Path $srcTree "out\$buildDir\ps2xRuntime\ps2EntryRunner.exe"
 $elf = Join-Path $root "game\disc\SCES_508.78"
 # Draw on several threads like tools\run_game.cmd (set PS2X_GS_THREADS=0 beforehand to draw on one).
 if (-not $env:PS2X_GS_THREADS) { $env:PS2X_GS_THREADS = "auto" }
 $events = @($Shots | ForEach-Object { [pscustomobject]@{ t = [double]$_; kind = "shot"; key = "" } })
 foreach ($k in $Keys) { $t, $name = $k -split ":", 2; $events += [pscustomobject]@{ t = [double]$t; kind = "key"; key = $name } }
 $events = $events | Sort-Object t
+# Frame shots from the runtime's own presented frame (runtime/tekken4_frameshot_overrides.cpp): frame_NNs.bmp, valid
+# even when the monitor is off or the run comes from a hidden process, where the window captures come back blank.
+if (-not $env:TEKKEN4_FRAME_SHOTS) { $env:TEKKEN4_FRAME_SHOTS = ($Shots -join ',') }
 $p = Start-Process -FilePath $exe -ArgumentList "`"$elf`"" -WorkingDirectory $RunDir `
     -RedirectStandardOutput "$RunDir\stdout.txt" -RedirectStandardError "$RunDir\stderr.txt" -PassThru
 $t0 = Get-Date

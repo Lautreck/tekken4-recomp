@@ -10,7 +10,8 @@ if not defined VSDIR (echo MSVC not found & exit /b 1)
 call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" >nul
 if errorlevel 1 exit /b 1
 set "PATH=%ProgramFiles%\CMake\bin;%LOCALAPPDATA%\Microsoft\WinGet\Links;%PATH%"
-set "SRC=%~dp0..\external\PS2Recomp"
+rem TEKKEN4_SRC=<PS2Recomp tree> builds another checkout (e.g. a clean worktree with only the committed patches).
+if defined TEKKEN4_SRC (set "SRC=%TEKKEN4_SRC%") else set "SRC=%~dp0..\external\PS2Recomp"
 if not defined TEKKEN4_BUILD_DIR set "TEKKEN4_BUILD_DIR=runtime"
 set "BUILD=%SRC%\out\%TEKKEN4_BUILD_DIR%"
 rem A Grok build is CPU-heavy side work: it waits while a timed game / PCSX2 run holds logs\run.lock

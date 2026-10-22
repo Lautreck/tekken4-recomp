@@ -10,7 +10,8 @@ never printed.
 
   python -I tools/usage_meter.py --status
   python -I tools/usage_meter.py --hook
-  python -I tools/usage_meter.py --calibrate 40 --weekly 12
+  python -I tools/usage_meter.py --calibrate 53 --resets 05:45 --note "reading ..."
+  python -I tools/usage_meter.py --calibrate 53 --resets 05:45 --weekly 12 --weekly-resets "2026-10-25 05:45"
 """
 
 import argparse
@@ -18,7 +19,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 THRESHOLDS = (50, 60, 70, 75, 78, 85, 90, 95)
@@ -135,7 +136,11 @@ def parse_ts_ms(value):
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
-    return int(parsed.timestamp() * 1000)
+    return to_ms(parsed)
+
+
+def to_ms(dt):
+    return int(dt.timestamp() * 1000)
 
 
 def normalize_model(model):
@@ -350,33 +355,73 @@ def load_entries(roots, cache_path):
     return merged
 
 
-def window_view(merged, now_ms):
+def chain_open(points, now_ms, length_ms, seed_ms):
+    """Return the block that contains now, as (start_ms or None, weight).
+
+    seed_ms None: the first point starts a block.
+    seed_ms set: points before that instant are ignored. The first point at or
+    after it starts a block. A point at or after start+length starts the next.
+    A point that would start a block after now does not erase the open one.
+    """
+    start = None
+    current = 0.0
+    open_start = None
+    open_weight = 0.0
+    for ts, usd in points:
+        if seed_ms is not None and start is None and ts < seed_ms:
+            continue
+        if start is None or ts >= start + length_ms:
+            start = ts
+            current = 0.0
+        current += usd
+        if start <= now_ms < start + length_ms:
+            open_start = start
+            open_weight = current
+        elif start > now_ms:
+            break
+    return open_start, open_weight
+
+
+def fixed_open(points, now_ms, end_ms, length_ms):
+    """Anchored window [end-length, end) while now is still before end.
+
+    At or after end, the next window is chain_open seeded at end.
+    """
+    if now_ms < end_ms:
+        start = end_ms - length_ms
+        weight = 0.0
+        for ts, usd in points:
+            if ts < start:
+                continue
+            if ts >= end_ms:
+                break
+            weight += usd
+        return start, weight
+    return chain_open(points, now_ms, length_ms, end_ms)
+
+
+def window_view(merged, now_ms, five_end_ms, week_end_ms):
     points = []
-    week_cut = now_ms - WEEK_MS
-    week = 0.0
     for rec in merged.values():
         ts = rec[0]
         if not isinstance(ts, int):
             continue
         usd = weight_usd(rec[1], rec[2], rec[3], rec[4], rec[5], rec[6])
         points.append((ts, usd))
-        if ts >= week_cut:
-            week += usd
     points.sort()
-    start = None
-    current = 0.0
-    last_start = None
-    last_weight = 0.0
-    for ts, usd in points:
-        if start is None or ts >= start + BLOCK_MS:
-            start = ts
-            current = 0.0
-        current += usd
-        last_start = start
-        last_weight = current
-    if last_start is not None and last_start <= now_ms < last_start + BLOCK_MS:
-        return last_start, last_weight, week
-    return None, 0.0, week
+    if five_end_ms is None:
+        start, w5 = chain_open(points, now_ms, BLOCK_MS, None)
+    else:
+        start, w5 = fixed_open(points, now_ms, five_end_ms, BLOCK_MS)
+    if week_end_ms is None:
+        cut = now_ms - WEEK_MS
+        week = 0.0
+        for ts, usd in points:
+            if ts >= cut:
+                week += usd
+        return start, w5, week, None, False
+    week_start, week = fixed_open(points, now_ms, week_end_ms, WEEK_MS)
+    return start, w5, week, week_start, True
 
 
 def round_pct(value):
@@ -487,7 +532,7 @@ def cross(pct, notified):
     return kept, new
 
 
-def run_hook(start, p5, p7, state_path):
+def run_hook(start, p5, p7, state_path, week_start=None, week_anchored=False):
     state = load_state(state_path)
     five = state["five_hour"]
     if five.get("window_start") != start:
@@ -496,6 +541,9 @@ def run_hook(start, p5, p7, state_path):
     notified5 = set(as_int_list(five.get("notified")))
     kept5, new5 = cross(p5, notified5)
     weekly = state["weekly"]
+    if week_anchored and weekly.get("window_start") != week_start:
+        weekly["window_start"] = week_start
+        weekly["notified"] = []
     notified7 = set(as_int_list(weekly.get("notified")))
     kept7, new7 = cross(p7, notified7)
     five["notified"] = sorted(kept5 | set(new5))
@@ -516,13 +564,12 @@ def run_hook(start, p5, p7, state_path):
         hook_output(notice_text(chosen[0], chosen[1]))
 
 
-def apply_calibration(path, now, pct5, w5, pct7, w7):
+def apply_calibration(path, now, pct5, w5, pct7, w7, five_resets, week_resets, note):
     if w5 <= 0:
         fail("current 5-hour window has no weighted usage; refused to calibrate")
     if pct7 is not None and w7 <= 0:
-        fail("last 7 days have no weighted usage; refused to calibrate weekly")
+        fail("weekly window has no weighted usage; refused to calibrate")
     current = load_json(path) or {}
-    five = current.get("five_hour") if isinstance(current.get("five_hour"), dict) else None
     weekly = current.get("weekly") if isinstance(current.get("weekly"), dict) else None
     stamp = now.isoformat()
     five = {
@@ -531,6 +578,10 @@ def apply_calibration(path, now, pct5, w5, pct7, w7):
         "budget_usd": w5 / (pct5 / 100.0),
         "at": stamp,
     }
+    if five_resets:
+        five["resets_at"] = five_resets
+    if isinstance(note, str) and note.strip():
+        five["note"] = note.strip()
     if pct7 is not None:
         weekly = {
             "percent": pct7,
@@ -538,7 +589,59 @@ def apply_calibration(path, now, pct5, w5, pct7, w7):
             "budget_usd": w7 / (pct7 / 100.0),
             "at": stamp,
         }
+        if week_resets:
+            weekly["resets_at"] = week_resets
     atomic_write(path, {"v": 1, "five_hour": five, "weekly": weekly})
+
+
+def stored_end(side):
+    if not isinstance(side, dict):
+        return None, None
+    iso = side.get("resets_at")
+    if not isinstance(iso, str) or not iso:
+        return None, None
+    ms = parse_ts_ms(iso)
+    if ms is None:
+        return None, None
+    return iso, ms
+
+
+def as_local(naive, label):
+    try:
+        return naive.astimezone()
+    except (OSError, OverflowError, ValueError):
+        fail(label)
+
+
+def next_local_hhmm(text, now_utc):
+    match = re.fullmatch(r"(\d{2}):(\d{2})", text.strip())
+    if match is None:
+        fail("--resets must be HH:MM in local time")
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    if hour > 23 or minute > 59:
+        fail("--resets must be HH:MM in local time")
+    local_now = now_utc.astimezone()
+    naive = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0, tzinfo=None)
+    candidate = as_local(naive, "--resets must be HH:MM in local time")
+    if candidate <= now_utc:
+        candidate = as_local(naive + timedelta(days=1), "--resets must be HH:MM in local time")
+    return candidate
+
+
+def parse_local_stamp(text):
+    label = '--weekly-resets must be "YYYY-MM-DD HH:MM" in local time'
+    match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})", text.strip())
+    if match is None:
+        fail(label)
+    year, month, day, hour, minute = (int(part) for part in match.groups())
+    if hour > 23 or minute > 59:
+        fail(label)
+    try:
+        naive = datetime(year, month, day, hour, minute)
+    except ValueError:
+        fail(label)
+    return as_local(naive, label)
 
 
 def parse_now(text):
@@ -559,7 +662,10 @@ def build_parser():
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--hook", action="store_true")
     parser.add_argument("--calibrate", metavar="PCT")
+    parser.add_argument("--resets", metavar="HH:MM")
     parser.add_argument("--weekly", metavar="PCT")
+    parser.add_argument("--weekly-resets", metavar="YYYY-MM-DD HH:MM")
+    parser.add_argument("--note")
     parser.add_argument("--root", action="append", default=None)
     parser.add_argument("--state", default=None)
     parser.add_argument("--cache", default=None)
@@ -572,6 +678,12 @@ def main(argv):
     args = build_parser().parse_args(argv)
     if args.weekly is not None and args.calibrate is None:
         fail("--weekly requires --calibrate")
+    if args.resets is not None and args.calibrate is None:
+        fail("--resets requires --calibrate")
+    if args.weekly_resets is not None and args.weekly is None:
+        fail("--weekly-resets requires --weekly")
+    if args.note is not None and args.calibrate is None:
+        fail("--note requires --calibrate")
     if args.hook and args.status:
         fail("pass only one of --hook and --status")
     now = parse_now(args.now)
@@ -589,18 +701,33 @@ def main(argv):
         cache_path = Path(args.cache) if args.cache else repo_path("logs", "usage_meter_cache.json")
         state_path = Path(args.state) if args.state else repo_path("logs", "usage_meter_state.json")
         cal_path = Path(args.calibration) if args.calibration else repo_path("logs", "usage_calibration.json")
+    existing = load_json(cal_path) or {}
+    old_five = existing.get("five_hour") if isinstance(existing.get("five_hour"), dict) else None
+    old_week = existing.get("weekly") if isinstance(existing.get("weekly"), dict) else None
+    if args.resets is not None:
+        five_dt = next_local_hhmm(args.resets, now)
+        five_iso, five_end = five_dt.isoformat(), to_ms(five_dt)
+    else:
+        five_iso, five_end = stored_end(old_five)
+    if args.weekly_resets is not None:
+        week_dt = parse_local_stamp(args.weekly_resets)
+        week_iso, week_end = week_dt.isoformat(), to_ms(week_dt)
+    else:
+        week_iso, week_end = stored_end(old_week)
     merged = load_entries(roots, cache_path)
-    now_ms = int(now.timestamp() * 1000)
-    start, w5, week = window_view(merged, now_ms)
+    now_ms = to_ms(now)
+    start, w5, week, week_start, week_anchored = window_view(merged, now_ms, five_end, week_end)
     if args.calibrate is not None:
         pct5 = parse_pct(args.calibrate)
         pct7 = parse_pct(args.weekly) if args.weekly is not None else None
-        apply_calibration(cal_path, now, pct5, w5, pct7, week)
+        apply_calibration(
+            cal_path, now, pct5, w5, pct7, week, five_iso, week_iso, args.note
+        )
     cal = load_json(cal_path) or {}
     p5 = pct_of(w5, cal.get("five_hour") if isinstance(cal, dict) else None)
     p7 = pct_of(week, cal.get("weekly") if isinstance(cal, dict) else None)
     if args.hook:
-        run_hook(start, p5, p7, state_path)
+        run_hook(start, p5, p7, state_path, week_start, week_anchored)
         return 0
     sys.stdout.write(format_status(start, w5, week, cal, now) + "\n")
     return 0

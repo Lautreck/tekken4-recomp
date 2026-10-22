@@ -26,6 +26,17 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   A fight loads and renders (Stage 1, Kazuya vs Law) but at ~7 fps: the VU1 interpreter (see "First fight").
   Native VU1 port started (stopped at the user's 95% usage report): the GoW VU1 engine is in (patch 11, 465/465
   tests), no native blocks generated yet (see "Native VU1 port").
+- **Resume at (2026-10-22 ~07:50, low-burn mode, weekly 90% = info only, weekly resets Mon 2026-10-26 07:00):**
+  grok-manager stopped; no Claude polling. Grok tasks running at 07:50 (results land in logs/grok/<task>_*.json,
+  hung exits are ended by the wrapper watchdog): gs-throughput, sound-run, fight-visuals, iop-sched, fpu-pr.
+  BATCH REVIEW, in order: (1) fpu-pr -> push branch ee-fpu-vu0-macro-semantics + gh pr create (notes
+  logs/grok/fpu-pr-notes.md); (2) gs-throughput -> patch 18 from the clean baseline (external/ps2recomp-p15check
+  has 01-17 applied), clean_build + fight frame shots, then launch gs-review-fixes (docs/ai/prompts/), then merge
+  jump-tables (logs/grok/jump_tables.toml into config/ghidra_export.toml, regenerate); (3) sound-run -> its test
+  fix (ps2_sif_dma_tests:203) must pass, then patch the sound changes (IOP/audio files + runtime/tekken4_overrides.cpp);
+  (4) iop-sched -> patch if tests pass and fps improves; (5) fight-visuals -> read the difference list.
+  Tools: tools/grok_list.ps1 (running tasks), tools/clean_build.ps1, tools/frame_stats.py, tools/wav_stats.py,
+  tools/grok_retro.py, tools/usage_meter.py. Grok retro procedure: docs/ai/grok-retro.md.
 - **Overnight 2026-10-22 (user asleep, wants uninterrupted work):** session-only cron jobs: hourly check at :17, resume at 05:52 after the usage window reset (53% at 01:46). 9 Grok tasks run detached (sound-run, review-patch14, qwc-pr in worktree external/ps2recomp-pr6, jump-tables, memcard, gs-throughput, game-thread done -> game-thread-fixes, usage-meter); grok-manager subagent watches them (digests in logs/grok/digest.md). Camera compare in flight: logs/camera_ours2 (TEKKEN4_CAMERA_LOG) vs logs/pcsx2_camera_probe (tools/pcsx2_camera_probe.ps1). PC power plan: sleep/hibernate never.
 - **Usage meter (2026-10-22):** `python -I tools/usage_meter.py --status` (estimate from transcript token counts,
   calibrated to /usage: `--calibrate PCT --resets HH:MM`). Hooks installed in .claude/settings.local.json

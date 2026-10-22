@@ -1,0 +1,986 @@
+diff --git a/ps2xIOP/CMakeLists.txt b/ps2xIOP/CMakeLists.txt
+index f8d3e44..e84ea30 100644
+--- a/ps2xIOP/CMakeLists.txt
++++ b/ps2xIOP/CMakeLists.txt
+@@ -12,6 +12,7 @@ add_library(ps2_iop STATIC
+     src/emulator/core/iop_cpu.cpp
+     src/emulator/core/iop_kernel.cpp
+     src/emulator/core/iop_memory.cpp
++    src/emulator/core/sound_engine.cpp
+     src/emulator/services/iop_module_loader.cpp
+     src/emulator/services/iop_rpc.cpp
+     src/emulator/imports/iop_cdvd.cpp
+diff --git a/ps2xIOP/include/ps2x/iop/iop_host.h b/ps2xIOP/include/ps2x/iop/iop_host.h
+index 1eceb08..0b77734 100644
+--- a/ps2xIOP/include/ps2x/iop/iop_host.h
++++ b/ps2xIOP/include/ps2x/iop/iop_host.h
+@@ -3,8 +3,10 @@
+ #include "ps2x/iop/iop_types.h"
+ 
+ #include <array>
++#include <atomic>
+ #include <cstddef>
+ #include <cstdint>
++#include <cstdlib>
+ #include <string>
+ #include <string_view>
+ 
+@@ -132,4 +134,17 @@ namespace ps2x::iop
+ 
+         virtual void log(LogLevel level, std::string_view message) = 0;
+     };
++
++    // Host mix from the IOP sound engine (48 kHz interleaved s16 stereo). The slot is one per process.
++    // Empty until the runtime registers a device. Playback is skipped when no function is set.
++    using MixedAudioFn = void (*)(const int16_t *interleavedStereo, size_t frames);
++    inline std::atomic<MixedAudioFn> &mixedAudioFnSlot()
++    {
++        static std::atomic<MixedAudioFn> fn{nullptr};
++        return fn;
++    }
++    inline void setMixedAudioFn(MixedAudioFn fn)
++    {
++        mixedAudioFnSlot().store(fn, std::memory_order_release);
++    }
+ }
+diff --git a/ps2xIOP/src/emulator/imports/iop_cdvd.cpp b/ps2xIOP/src/emulator/imports/iop_cdvd.cpp
+index ad58fb4..3604aaf 100644
+--- a/ps2xIOP/src/emulator/imports/iop_cdvd.cpp
++++ b/ps2xIOP/src/emulator/imports/iop_cdvd.cpp
+@@ -12,6 +12,7 @@
+ #include <cstring>
+ #include <filesystem>
+ #include <limits>
++#include <sstream>
+ #include <string>
+ #include <system_error>
+ #include <unordered_map>
+@@ -338,6 +339,17 @@ namespace ps2x::iop::detail
+                 }
+             }
+ 
++            case 24: // sceCdReadClock. zsiopdrv asks; a fixed clock is enough.
++                if (host.hostPath(HostPathKind::CdImage).empty())
++                    return false;
++                if (a0 != 0u)
++                {
++                    const uint8_t clock[8] = {0x00, 0x00, 0x00, 0x12, 0x00, 0x01, 0x01, 0x24};
++                    (void)memory.writeRam(a0, clock, sizeof(clock));
++                }
++                cpu.gpr[2] = a0 != 0u ? 1u : 0u;
++                return true;
++
+             case 75: // sceCdMmode
+                 mediaMode = a0;
+                 cpu.gpr[2] = 1u;
+@@ -601,6 +613,35 @@ namespace ps2x::iop::detail
+ 
+             const std::string guestPath = memory.readString(nameAddress, 1024u);
+             IsoNode *node = findVirtualIsoNode(guestPath);
++            if (!node && !host.hostPath(HostPathKind::CdImage).empty())
++            {
++                std::string canon = guestPath;
++                for (char &character : canon)
++                {
++                    if (character == '\\')
++                        character = '/';
++                    else
++                        character = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
++                }
++                constexpr char kDataBin[] = "TEKKEN/DATA.BIN";
++                const size_t at = canon.find(kDataBin);
++                if (at != std::string::npos)
++                {
++                    const size_t after = at + sizeof(kDataBin) - 1u;
++                    if (after >= canon.size() || canon[after] == ';')
++                    {
++                        std::array<uint8_t, 32u> hit{};
++                        writeLe32(hit.data(), 1236u);
++                        writeLe32(hit.data() + 4u, 2694412288u);
++                        const char leaf[] = "DATA.BIN;1";
++                        std::memcpy(hit.data() + 8u, leaf, sizeof(leaf) - 1u);
++                        std::ostringstream out;
++                        out << "[cdvd] sceCdSearchFile " << guestPath << " -> LBN 1236";
++                        host.log(LogLevel::Info, out.str());
++                        return memory.writeRam(resultAddress, hit.data(), hit.size());
++                    }
++                }
++            }
+             if (!node)
+                 return false;
+ 
+diff --git a/ps2xIOP/src/emulator/imports/iop_ioman.cpp b/ps2xIOP/src/emulator/imports/iop_ioman.cpp
+index 3eb4119..c026924 100644
+--- a/ps2xIOP/src/emulator/imports/iop_ioman.cpp
++++ b/ps2xIOP/src/emulator/imports/iop_ioman.cpp
+@@ -3,21 +3,199 @@
+ #include "../core/iop_cpu.h"
+ #include "../core/iop_memory.h"
+ #include "../services/iop_rpc.h"
++#include "ps2x/iop/iop_host.h"
+ 
+ #include <algorithm>
++#include <cctype>
++#include <cstdint>
++#include <sstream>
++#include <vector>
+ 
+ namespace ps2x::iop::detail
+ {
+-    IopIoman::IopIoman(IopMemory &memory) noexcept
+-        : m_memory(memory)
++    namespace
++    {
++        constexpr uint64_t kDataBinLbn = 1236u;
++        constexpr uint64_t kDataBinSize = 2694412288u;
++        constexpr uint32_t kMaxRead = 2u * 1024u * 1024u;
++
++        std::string canonicalPath(std::string path)
++        {
++            for (char &character : path)
++            {
++                if (character == '\\')
++                    character = '/';
++                else
++                    character = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
++            }
++            return path;
++        }
++    }
++
++    IopIoman::IopIoman(IopHost &host, IopMemory &memory) noexcept
++        : m_host(host), m_memory(memory)
+     {
+     }
+ 
+     void IopIoman::reset()
+     {
++        if (m_image != 0u)
++            m_host.closeHostFile(m_image);
++        m_image = 0u;
++        m_files.clear();
+         m_devices.clear();
+     }
+ 
++    bool IopIoman::soundRoute() const
++    {
++        return !m_host.hostPath(HostPathKind::CdImage).empty();
++    }
++
++    bool IopIoman::ensureImage()
++    {
++        if (m_image != 0u)
++            return true;
++        const std::string path = m_host.hostPath(HostPathKind::CdImage);
++        if (path.empty())
++            return false;
++        m_image = m_host.openHostFile(path);
++        return m_image != 0u;
++    }
++
++    bool IopIoman::cdromOpen(IopCpuState &cpu)
++    {
++        const std::string name = m_memory.readString(cpu.gpr[4], 1024u);
++        const std::string path = canonicalPath(name);
++        if (path.rfind("CDROM", 0) != 0)
++            return false;
++
++        auto fail = [&](int32_t code)
++        {
++            cpu.gpr[2] = static_cast<uint32_t>(code);
++            return true;
++        };
++        if (!ensureImage())
++            return fail(-1);
++
++        uint64_t imageSize = 0u;
++        if (!m_host.hostFileSize(m_image, imageSize))
++            return fail(-1);
++
++        uint64_t base = 0u;
++        uint64_t size = imageSize;
++        const size_t dataBin = path.find("TEKKEN/DATA.BIN");
++        if (dataBin != std::string::npos)
++        {
++            const size_t after = dataBin + std::char_traits<char>::length("TEKKEN/DATA.BIN");
++            if (after < path.size() && path[after] != ';')
++                return fail(-1);
++            base = kDataBinLbn * 2048u;
++            if (base >= imageSize)
++                return fail(-1);
++            size = std::min(imageSize - base, kDataBinSize);
++        }
++        else if (path.find("/TEKKEN/") != std::string::npos)
++            return fail(-1);
++
++        if (m_files.empty())
++            m_files.emplace_back();
++        size_t fd = 0u;
++        for (size_t i = 1u; i < m_files.size(); ++i)
++        {
++            if (!m_files[i].open)
++            {
++                fd = i;
++                break;
++            }
++        }
++        if (fd == 0u)
++        {
++            if (m_files.size() >= 32u)
++                return fail(-1);
++            fd = m_files.size();
++            m_files.emplace_back();
++        }
++        m_files[fd] = File{true, 0u, base, size};
++        std::ostringstream out;
++        out << "[ioman] open " << name << " fd=" << fd << " base=" << base << " size=" << size;
++        m_host.log(LogLevel::Info, out.str());
++        cpu.gpr[2] = static_cast<uint32_t>(fd);
++        return true;
++    }
++
++    bool IopIoman::cdromClose(IopCpuState &cpu)
++    {
++        const uint32_t fd = cpu.gpr[4];
++        if (fd == 0u || fd >= m_files.size() || !m_files[fd].open)
++            return false;
++        m_files[fd].open = false;
++        cpu.gpr[2] = 0u;
++        return true;
++    }
++
++    bool IopIoman::cdromRead(IopCpuState &cpu)
++    {
++        const uint32_t fd = cpu.gpr[4];
++        if (fd == 0u || fd >= m_files.size() || !m_files[fd].open)
++            return false;
++        File &file = m_files[fd];
++        uint32_t wanted = cpu.gpr[6];
++        if (wanted > kMaxRead)
++            wanted = kMaxRead;
++        if (file.position >= file.size || wanted == 0u)
++        {
++            cpu.gpr[2] = 0u;
++            return true;
++        }
++        const uint64_t remain = file.size - file.position;
++        if (wanted > remain)
++            wanted = static_cast<uint32_t>(remain);
++        std::vector<uint8_t> bytes(wanted);
++        size_t got = 0u;
++        if (!m_host.readHostFile(m_image, file.base + file.position, bytes.data(), wanted, got) || got == 0u)
++        {
++            cpu.gpr[2] = static_cast<uint32_t>(-1);
++            return true;
++        }
++        if (!m_memory.writeRam(cpu.gpr[5], bytes.data(), got))
++        {
++            cpu.gpr[2] = static_cast<uint32_t>(-1);
++            return true;
++        }
++        file.position += got;
++        cpu.gpr[2] = static_cast<uint32_t>(got);
++        return true;
++    }
++
++    bool IopIoman::cdromSeek(IopCpuState &cpu)
++    {
++        const uint32_t fd = cpu.gpr[4];
++        if (fd == 0u || fd >= m_files.size() || !m_files[fd].open)
++            return false;
++        File &file = m_files[fd];
++        const int32_t offset = static_cast<int32_t>(cpu.gpr[5]);
++        const int32_t whence = static_cast<int32_t>(cpu.gpr[6]);
++        int64_t next = static_cast<int64_t>(file.position);
++        if (whence == 0)
++            next = offset;
++        else if (whence == 1)
++            next += offset;
++        else if (whence == 2)
++            next = static_cast<int64_t>(file.size) + offset;
++        else
++        {
++            cpu.gpr[2] = static_cast<uint32_t>(-1);
++            return true;
++        }
++        if (next < 0)
++            next = 0;
++        if (static_cast<uint64_t>(next) > file.size)
++            next = static_cast<int64_t>(file.size);
++        file.position = static_cast<uint64_t>(next);
++        cpu.gpr[2] = static_cast<uint32_t>(file.position);
++        return true;
++    }
++
+     bool IopIoman::dispatchImport(uint16_t ordinal, IopCpuState &cpu, IopGuestExecutor &executor)
+     {
+         constexpr size_t kMaxDevices = 16u;
+@@ -29,6 +207,14 @@ namespace ps2x::iop::detail
+ 
+         switch (ordinal)
+         {
++        case 4: // open
++            return soundRoute() && cdromOpen(cpu);
++        case 5: // close
++            return soundRoute() && cdromClose(cpu);
++        case 6: // read
++            return soundRoute() && cdromRead(cpu);
++        case 8: // lseek
++            return soundRoute() && cdromSeek(cpu);
+         case 20: // AddDrv
+         {
+             if (a0 == 0u || m_devices.size() >= kMaxDevices)
+diff --git a/ps2xIOP/src/emulator/iop_emulator.cpp b/ps2xIOP/src/emulator/iop_emulator.cpp
+index e5f63a9..cf8e34c 100644
+--- a/ps2xIOP/src/emulator/iop_emulator.cpp
++++ b/ps2xIOP/src/emulator/iop_emulator.cpp
+@@ -8,6 +8,7 @@
+ #include "core/iop_kernel.h"
+ #include "imports/iop_loadcore.h"
+ #include "core/iop_memory.h"
++#include "core/sound_engine.h"
+ #include "services/iop_module_loader.h"
+ #include "services/iop_rpc.h"
+ #include "imports/iop_stdio.h"
+@@ -18,12 +19,14 @@
+ #include "iop_emulator_const.h"
+ 
+ #include <algorithm>
++#include <array>
+ #include <cctype>
+ #include <map>
+ #include <optional>
+ #include <span>
+ #include <sstream>
+ #include <utility>
++#include <vector>
+ 
+ namespace ps2x::iop::detail
+ {
+@@ -61,6 +64,69 @@ namespace ps2x::iop::detail
+             return true;
+         }
+ 
++        // ELF image sitting in IOP RAM (the bytes sceSifSetDma copied). IopHost::readGuest is EE RAM
++        // on the runtime adapter and the test host's own buffer in unit tests, so the loader tries this first.
++        bool readElfImageFromIopRam(IopMemory &memory, uint32_t address, std::vector<uint8_t> &bytes)
++        {
++            uint8_t hdr[52]{};
++            if (!memory.readRam(address, hdr, sizeof(hdr)))
++                return false;
++            if (hdr[0] != 0x7Fu || hdr[1] != 'E' || hdr[2] != 'L' || hdr[3] != 'F' || hdr[4] != 1u || hdr[5] != 1u)
++                return false;
++            const auto ru16 = [](const uint8_t *p) -> uint16_t {
++                return static_cast<uint16_t>(p[0] | (static_cast<uint16_t>(p[1]) << 8u));
++            };
++            const auto ru32 = [](const uint8_t *p) -> uint32_t {
++                return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8u) |
++                       (static_cast<uint32_t>(p[2]) << 16u) | (static_cast<uint32_t>(p[3]) << 24u);
++            };
++            if (ru16(hdr + 18) != 8u || ru16(hdr + 40) < 52u)
++                return false;
++            const uint32_t phoff = ru32(hdr + 28);
++            const uint32_t shoff = ru32(hdr + 32);
++            const uint16_t phentsize = ru16(hdr + 42);
++            const uint16_t phnum = ru16(hdr + 44);
++            const uint16_t shentsize = ru16(hdr + 46);
++            const uint16_t shnum = ru16(hdr + 48);
++            constexpr uint64_t kMaxImageSize = 2ull * 1024ull * 1024ull;
++            uint64_t required = sizeof(hdr);
++            required = std::max<uint64_t>(required, static_cast<uint64_t>(phoff) + static_cast<uint64_t>(phentsize) * phnum);
++            required = std::max<uint64_t>(required, static_cast<uint64_t>(shoff) + static_cast<uint64_t>(shentsize) * shnum);
++            if (required > kMaxImageSize)
++                return false;
++            bytes.resize(static_cast<size_t>(required));
++            if (!memory.readRam(address, bytes.data(), bytes.size()))
++                return false;
++            constexpr uint32_t kShtNobits = 8u;
++            if (shnum != 0u && shentsize >= 40u)
++            {
++                for (uint16_t i = 0; i < shnum; ++i)
++                {
++                    const size_t off = static_cast<size_t>(shoff) + static_cast<size_t>(i) * shentsize;
++                    if (off + 40u > bytes.size())
++                        return false;
++                    const uint8_t *section = bytes.data() + off;
++                    if (ru32(section + 4) != kShtNobits)
++                        required = std::max<uint64_t>(required, static_cast<uint64_t>(ru32(section + 16)) + ru32(section + 20));
++                }
++            }
++            if (phnum != 0u && phentsize >= 32u)
++            {
++                for (uint16_t i = 0; i < phnum; ++i)
++                {
++                    const size_t off = static_cast<size_t>(phoff) + static_cast<size_t>(i) * phentsize;
++                    if (off + 32u > bytes.size())
++                        return false;
++                    const uint8_t *program = bytes.data() + off;
++                    required = std::max<uint64_t>(required, static_cast<uint64_t>(ru32(program + 4)) + ru32(program + 16));
++                }
++            }
++            if (required > kMaxImageSize)
++                return false;
++            bytes.resize(static_cast<size_t>(required));
++            return memory.readRam(address, bytes.data(), bytes.size());
++        }
++
+     }
+ 
+     class IopEmulator::Impl final : public IopGuestExecutor
+@@ -105,7 +171,7 @@ namespace ps2x::iop::detail
+               heaplib(memory),
+               intrman(memory),
+               timrman(),
+-              ioman(memory),
++              ioman(hostRef, memory),
+               cpuCore(memory),
+               imports(memory),
+               loadcore(memory, imports)
+@@ -124,6 +190,9 @@ namespace ps2x::iop::detail
+             intrman.reset();
+             timrman.reset();
+             ioman.reset();
++            m_libsd = {};
++            m_sound.reset();
++            m_soundRoute = -1;
+             pendingDmaInterrupts.clear();
+             pendingGuestCallbacks.clear();
+             nextModuleId = 1;
+@@ -237,6 +306,276 @@ namespace ps2x::iop::detail
+             Missing,
+         };
+ 
++        [[nodiscard]] bool soundRouteOn()
++        {
++            if (m_soundRoute < 0)
++            {
++                m_soundRoute = host.hostPath(HostPathKind::CdImage).empty() ? 0 : 1;
++                if (m_soundRoute == 1)
++                    log(LogLevel::Info, "[libsd] sound route on");
++            }
++            return m_soundRoute == 1;
++        }
++
++        [[nodiscard]] uint32_t stackArg(const CpuState &cpu, uint32_t slot) const
++        {
++            const uint32_t sp = cpu.gpr[29];
++            if (sp < 16u)
++                return 0u;
++            return memory.read32(sp + 16u + slot * 4u);
++        }
++
++        void libsdInit()
++        {
++            m_libsd = {};
++            for (uint32_t core = 0; core < 2u; ++core)
++            {
++                m_sound.initCore(core);
++                m_sound.setSwitch((0x16u << 8) | core, 0xFFFFFFu); // KOFF
++                for (uint32_t id : {0x18u, 0x19u, 0x1Au, 0x1Bu})
++                    m_sound.setSwitch((id << 8) | core, 0xFFFFFFu); // VMIX*
++                m_sound.setParam((0x08u << 8) | core, core == 0u ? 0x0FF0u : 0x0FFCu);
++                for (uint32_t id = 0x09u; id <= 0x10u; ++id)
++                {
++                    // Both masters start at unity. step() multiplies core 0 by core 1's master, so an
++                    // untouched core would mute the mix. The driver overwrites these when it wants to.
++                    const bool master = id == 0x09u || id == 0x0Au;
++                    uint16_t value = master ? 0x3FFFu : 0u;
++                    if (core == 1u && (id == 0x0Du || id == 0x0Eu))
++                        value = 0x7FFFu;
++                    m_sound.setParam((id << 8) | 0x80u | core, value);
++                }
++                for (uint32_t voice = 0; voice < SoundEngine::VoicesPerCore; ++voice)
++                {
++                    const uint32_t packed = (voice << 1) | core;
++                    m_sound.setParam((0x02u << 8) | packed, 0x3FFFu);
++                    m_sound.setAddr((0x20u << 8) | packed, 0u);
++                }
++            }
++            const uint8_t silentLoop[16] = {0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07,
++                                            0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07};
++            m_sound.writeSampleRam(0x5000u, silentLoop, sizeof(silentLoop));
++        }
++
++        bool dispatchLibsd(uint16_t ordinal, CpuState &cpu)
++        {
++            if (!soundRouteOn())
++                return false;
++            const auto ret = [&](uint32_t value)
++            {
++                cpu.gpr[2] = value;
++            };
++            const uint32_t a0 = cpu.gpr[4];
++            const uint32_t a1 = cpu.gpr[5];
++            const uint32_t a2 = cpu.gpr[6];
++            const uint32_t a3 = cpu.gpr[7];
++            switch (ordinal)
++            {
++            case 4:
++                libsdInit();
++                log(LogLevel::Info, "[libsd] sceSdInit");
++                ret(0u);
++                return true;
++            case 5:
++                m_sound.setParam(a0, static_cast<uint16_t>(a1));
++                ret(0u);
++                return true;
++            case 6:
++                ret(m_sound.getParam(a0));
++                return true;
++            case 7:
++                if (((a0 >> 8) & 0xFFu) == 0x15u && a1 != 0u)
++                {
++                    static int keys = 0;
++                    if (keys < 8)
++                    {
++                        ++keys;
++                        std::ostringstream out;
++                        out << "[libsd] KON entry=0x" << std::hex << a0 << " mask=0x" << a1;
++                        log(LogLevel::Info, out.str());
++                    }
++                }
++                m_sound.setSwitch(a0, a1);
++                ret(0u);
++                return true;
++            case 8:
++                ret(m_sound.getSwitch(a0));
++                return true;
++            case 9:
++                m_sound.setAddr(a0, a1);
++                ret(0u);
++                return true;
++            case 10:
++                ret(m_sound.getAddr(a0));
++                return true;
++            case 11:
++                m_sound.setCoreAttr(a0, a1);
++                ret(0u);
++                return true;
++            case 12:
++                ret(m_sound.getCoreAttr(a0));
++                return true;
++            case 17:
++            {
++                const uint32_t channel = a0 & 1u;
++                const uint32_t mode = a1;
++                uint32_t size = stackArg(cpu, 0);
++                if (size == 0u || size > 0x200000u)
++                {
++                    const uint32_t viaT0 = cpu.gpr[8];
++                    if (viaT0 != 0u && viaT0 <= 0x200000u)
++                        size = viaT0;
++                    else
++                        size = 0u;
++                }
++                std::vector<uint8_t> data(size);
++                if ((mode & 3u) == 0u)
++                {
++                    if (size != 0u && !memory.readRam(a2, data.data(), size))
++                        data.assign(size, 0u);
++                    if (size != 0u)
++                        m_sound.writeSampleRam(a3, data.data(), size);
++                }
++                else if (size != 0u)
++                {
++                    m_sound.readSampleRam(a3, data.data(), size);
++                    (void)memory.writeRam(a2, data.data(), size);
++                }
++                if ((mode & 8u) == 0u && m_libsd.transHandler[channel] != 0u)
++                {
++                    (void)callFunction(m_libsd.transHandler[channel], channel, m_libsd.transArg[channel], 0u, 0u,
++                                       m_libsd.transGp[channel], 100000u);
++                }
++                static int transfers = 0;
++                if (transfers < 12)
++                {
++                    ++transfers;
++                    std::ostringstream out;
++                    out << "[libsd] VoiceTrans ch=" << channel << " mode=0x" << std::hex << mode
++                        << " iop=0x" << a2 << " spu=0x" << a3 << " size=" << std::dec << size;
++                    log(LogLevel::Info, out.str());
++                }
++                ret((size + 63u) & ~63u);
++                return true;
++            }
++            case 18:
++            {
++                const uint32_t channel = a0 & 1u;
++                const uint32_t mode = a1;
++                const uint32_t iopBuffer = a2;
++                const uint32_t size = a3;
++                if ((mode & 3u) == 2u)
++                {
++                    m_sound.stopStream(channel);
++                    m_libsd.blockActive[channel] = false;
++                    ret(0u);
++                    return true;
++                }
++                const uint32_t physical = IopMemory::physicalAddress(iopBuffer);
++                if (size == 0u || physical >= IopMemory::RamSize || size > IopMemory::RamSize - physical)
++                {
++                    ret(static_cast<uint32_t>(-100));
++                    return true;
++                }
++                m_sound.startStream(channel, memory.ram().data() + physical, size, (mode & 0x10u) != 0u);
++                m_libsd.blockActive[channel] = true;
++                m_libsd.blockBuffer[channel] = iopBuffer;
++                m_libsd.blockSize[channel] = size;
++                std::ostringstream out;
++                out << "[libsd] BlockTrans ch=" << channel << " mode=0x" << std::hex << mode
++                    << " buf=0x" << iopBuffer << " size=" << std::dec << size;
++                log(LogLevel::Info, out.str());
++                ret(0u);
++                return true;
++            }
++            case 19:
++                ret(1u);
++                return true;
++            case 20:
++            {
++                const uint32_t channel = a0 & 1u;
++                if (!m_libsd.blockActive[channel])
++                {
++                    ret(0u);
++                    return true;
++                }
++                const uint32_t position = m_sound.streamPosition(channel);
++                const uint32_t side = m_libsd.blockSize[channel] != 0u && position >= m_libsd.blockSize[channel] / 2u ? 1u : 0u;
++                ret((side << 24) | ((m_libsd.blockBuffer[channel] + position) & 0xFFFFFFu));
++                return true;
++            }
++            case 23:
++                if (a1 != 0u)
++                {
++                    const uint32_t core = a0 & 1u;
++                    m_sound.setParam((0x0Bu << 8) | 0x80u | core, static_cast<uint16_t>(memory.read32(a1 + 8u)));
++                    m_sound.setParam((0x0Cu << 8) | 0x80u | core, static_cast<uint16_t>(memory.read32(a1 + 12u)));
++                    m_sound.setCoreAttr(2u | core, memory.read32(a1 + 4u) != 0u ? 1u : 0u);
++                }
++                ret(0u);
++                return true;
++            case 25:
++            {
++                static constexpr uint32_t kWorkHalfwords[10] = {0x02u, 0x4D8u, 0x3E8u, 0x908u, 0xDFCu, 0x15BCu, 0x1ED8u, 0x3008u, 0x3008u, 0x780u};
++                const uint32_t core = a0 & 1u;
++                const uint32_t mode = a2 < 10u ? a2 : 0u;
++                const uint32_t end = 0x1FFFFFu;
++                const uint32_t start = end - kWorkHalfwords[mode] * 8u + 1u;
++                m_sound.setAddr((0x1Du << 8) | core, end);
++                m_sound.setAddr((0x1Cu << 8) | core, start);
++                m_sound.clearSampleRam(start, 64u);
++                ret(0u);
++                return true;
++            }
++            case 21:
++            case 26:
++            {
++                const uint32_t channel = a0 & 1u;
++                m_libsd.transHandler[channel] = a1;
++                m_libsd.transArg[channel] = a2;
++                m_libsd.transGp[channel] = cpu.gpr[28];
++                ret(0u);
++                return true;
++            }
++            case 22:
++            case 27:
++                m_libsd.spu2Handler[0] = a0;
++                m_libsd.spu2Arg[0] = a1;
++                m_libsd.spu2Gp[0] = cpu.gpr[28];
++                ret(0u);
++                return true;
++            default:
++            {
++                static uint32_t seen = 0u;
++                if (ordinal < 32u && (seen & (1u << ordinal)) == 0u)
++                {
++                    seen |= 1u << ordinal;
++                    std::ostringstream out;
++                    out << "[libsd] ordinal " << ordinal << " stubbed";
++                    log(LogLevel::Info, out.str());
++                }
++                ret(0u);
++                return true;
++            }
++            }
++        }
++
++        void drainMixedAudio()
++        {
++            if (!soundRouteOn())
++                return;
++            m_sound.advanceTo(totalCycles);
++            int16_t block[1024 * 2];
++            for (;;)
++            {
++                const size_t frames = m_sound.drainOutput(block, 1024u);
++                if (frames == 0u)
++                    break;
++                if (const MixedAudioFn sink = mixedAudioFnSlot().load(std::memory_order_acquire))
++                    sink(block, frames);
++            }
++        }
++
+         ImportDisposition dispatchImport(const IopImportCall &call, CpuState &cpu)
+         {
+             const uint32_t a0 = cpu.gpr[4];
+@@ -316,6 +655,8 @@ namespace ps2x::iop::detail
+             }
+             if (iequals(call.library, "ioman") && ioman.dispatchImport(call.ordinal, cpu, *this))
+                 return ImportDisposition::Handled;
++            if (iequals(call.library, "libsd") && dispatchLibsd(call.ordinal, cpu))
++                return ImportDisposition::Handled;
+             if (iequals(call.library, "sifman"))
+             {
+                 return rpc.dispatchSifManImport(call.ordinal, cpu)
+@@ -581,6 +922,7 @@ namespace ps2x::iop::detail
+                     if (totalCycles == before)
+                         ++totalCycles;
+                 }
++                drainMixedAudio();
+             }
+             catch (...)
+             {
+@@ -638,6 +980,9 @@ namespace ps2x::iop::detail
+                 << " base=0x" << modules[result.moduleId].base
+                 << " start=" << std::dec << result.startResult;
+             log(LogLevel::Info, out.str());
++            // callFunction runs only the entry. An IRX that CreateThread's its RPC server and returns
++            // would otherwise still be unregistered when sceSifLoadModuleBuffer returns to the EE.
++            runCycles(2000000u);
+             return result;
+         }
+ 
+@@ -655,8 +1000,20 @@ namespace ps2x::iop::detail
+         ModuleLoadResult loadModuleBuffer(uint32_t guestAddress, const void *arguments, uint32_t argumentSize)
+         {
+             std::vector<uint8_t> image;
+-            if (!IopModuleLoader::readElfFromGuest(host, guestAddress, image))
++            // The game DMAs the IRX package into IOP RAM, then passes that IOP address.
++            // readGuest on the runtime host reads EE RAM (unit tests plant the image there instead).
++            if (!readElfImageFromIopRam(memory, guestAddress, image) &&
++                !IopModuleLoader::readElfFromGuest(host, guestAddress, image))
++            {
++                uint8_t mag[4]{};
++                (void)memory.readRam(guestAddress, mag, sizeof(mag));
++                std::ostringstream out;
++                out << "[IOP] loadModuleBuffer 0x" << std::hex << guestAddress << " not an ELF, iop bytes "
++                    << static_cast<unsigned>(mag[0]) << " " << static_cast<unsigned>(mag[1]) << " "
++                    << static_cast<unsigned>(mag[2]) << " " << static_cast<unsigned>(mag[3]);
++                log(LogLevel::Warning, out.str());
+                 return {true, -1, -1};
++            }
+             std::ostringstream tag;
+             tag << "buffer@0x" << std::hex << guestAddress;
+             return loadImage(tag.str(), image, arguments, argumentSize);
+@@ -691,6 +1048,21 @@ namespace ps2x::iop::detail
+         IopIntrman intrman;
+         IopTimrman timrman;
+         IopIoman ioman;
++        struct LibsdState
++        {
++            std::array<uint32_t, 2> transHandler{};
++            std::array<uint32_t, 2> transGp{};
++            std::array<uint32_t, 2> transArg{};
++            std::array<uint32_t, 2> spu2Handler{};
++            std::array<uint32_t, 2> spu2Gp{};
++            std::array<uint32_t, 2> spu2Arg{};
++            std::array<bool, 2> blockActive{};
++            std::array<uint32_t, 2> blockBuffer{};
++            std::array<uint32_t, 2> blockSize{};
++        };
++        LibsdState m_libsd{};
++        SoundEngine m_sound;
++        int m_soundRoute = -1;
+         IopCpuCore cpuCore;
+         IopImportRegistry imports;
+         IopLoadcore loadcore;
+diff --git a/ps2xRuntime/src/lib/ps2_audio.cpp b/ps2xRuntime/src/lib/ps2_audio.cpp
+index 6bb6494..7a5e525 100644
+--- a/ps2xRuntime/src/lib/ps2_audio.cpp
++++ b/ps2xRuntime/src/lib/ps2_audio.cpp
+@@ -1,7 +1,14 @@
+ #include "runtime/ps2_audio.h"
+ #include "runtime/ps2_memory.h"
+ #include "ps2_host_backend.h"
++#include "ps2x/iop/iop_host.h"
++#include <cstdint>
++#include <cstdio>
++#include <cstdlib>
+ #include <cstring>
++#include <filesystem>
++#include <fstream>
++#include <mutex>
+ #include <vector>
+ 
+ namespace
+@@ -326,3 +333,170 @@ void PS2AudioBackend::stopAll()
+     m_impl->activeSounds.clear();
+ #endif
+ }
++
++namespace
++{
++    // 48 kHz s16 stereo from the IOP mixer (ps2x::iop::setMixedAudioFn). The WAV is the check Claude can read;
++    // the raylib stream is best-effort playback. UpdateAudioStream drops a write larger than one device sub-buffer
++    // (~rate/30 frames), so playback is pushed in 1024-frame pieces and only when a sub-buffer is free.
++    class MixedOutput
++    {
++    public:
++        void push(const int16_t *pcm, size_t frames)
++        {
++            if (!pcm || frames == 0u)
++                return;
++            std::lock_guard<std::mutex> lock(m_mutex);
++            openWav();
++            if (m_wav)
++            {
++                m_wav.write(reinterpret_cast<const char *>(pcm), static_cast<std::streamsize>(frames * 4u));
++                m_frames += static_cast<uint64_t>(frames);
++                m_sinceFlush += static_cast<uint32_t>(frames);
++                if (m_sinceFlush >= 48000u)
++                {
++                    patchHeader();
++                    m_wav.flush();
++                    m_sinceFlush = 0u;
++                }
++            }
++#if !defined(PLATFORM_VITA)
++            pumpDevice(pcm, frames);
++#endif
++        }
++
++        ~MixedOutput()
++        {
++            std::lock_guard<std::mutex> lock(m_mutex);
++            if (m_wav)
++            {
++                patchHeader();
++                m_wav.flush();
++            }
++        }
++
++    private:
++        static void writeLe32(uint8_t *p, uint32_t value)
++        {
++            p[0] = static_cast<uint8_t>(value);
++            p[1] = static_cast<uint8_t>(value >> 8);
++            p[2] = static_cast<uint8_t>(value >> 16);
++            p[3] = static_cast<uint8_t>(value >> 24);
++        }
++
++        void openWav()
++        {
++            if (m_wavTried)
++                return;
++            m_wavTried = true;
++            const char *path = std::getenv("TEKKEN4_SOUND_WAV");
++            if (!path || path[0] == '\0')
++                return;
++            std::error_code ec;
++            const std::filesystem::path file(path);
++            if (file.has_parent_path())
++                std::filesystem::create_directories(file.parent_path(), ec);
++            m_wav.open(file, std::ios::binary | std::ios::trunc);
++            if (!m_wav)
++            {
++                std::fprintf(stderr, "[tekken4] sound wav open failed %s\n", path);
++                return;
++            }
++            uint8_t header[44] = {};
++            m_wav.write(reinterpret_cast<const char *>(header), 44);
++            patchHeader();
++            m_wav.flush();
++            std::fprintf(stderr, "[tekken4] sound wav %s\n", path);
++        }
++
++        void patchHeader()
++        {
++            if (!m_wav)
++                return;
++            const uint64_t dataBytes64 = m_frames * 4u;
++            const uint32_t dataBytes = dataBytes64 > 0xFFFFFFFFu ? 0xFFFFFFFFu : static_cast<uint32_t>(dataBytes64);
++            const uint32_t fileSize = 36u + dataBytes;
++            uint8_t h[44] = {};
++            h[0] = 'R'; h[1] = 'I'; h[2] = 'F'; h[3] = 'F';
++            writeLe32(h + 4, fileSize);
++            h[8] = 'W'; h[9] = 'A'; h[10] = 'V'; h[11] = 'E';
++            h[12] = 'f'; h[13] = 'm'; h[14] = 't'; h[15] = ' ';
++            writeLe32(h + 16, 16u);
++            h[20] = 1; h[22] = 2;
++            writeLe32(h + 24, 48000u);
++            writeLe32(h + 28, 48000u * 4u);
++            h[32] = 4; h[34] = 16;
++            h[36] = 'd'; h[37] = 'a'; h[38] = 't'; h[39] = 'a';
++            writeLe32(h + 40, dataBytes);
++            const auto end = m_wav.tellp();
++            m_wav.seekp(0);
++            m_wav.write(reinterpret_cast<const char *>(h), 44);
++            m_wav.seekp(end);
++        }
++
++#if !defined(PLATFORM_VITA)
++        void pumpDevice(const int16_t *pcm, size_t frames)
++        {
++            if (!m_deviceGaveUp && !m_streamOn && IsAudioDeviceReady())
++            {
++                m_stream = LoadAudioStream(48000, 16, 2);
++                if (m_stream.sampleRate == 48000)
++                {
++                    PlayAudioStream(m_stream);
++                    m_streamOn = true;
++                    std::fprintf(stderr, "[tekken4] sound device 48000 Hz stereo\n");
++                }
++                else
++                    m_deviceGaveUp = true;
++            }
++            if (!m_streamOn)
++                return;
++            m_queue.insert(m_queue.end(), pcm, pcm + frames * 2u);
++            constexpr size_t kChunk = 1024u;
++            while (m_queue.size() / 2u >= kChunk && IsAudioStreamProcessed(m_stream))
++            {
++                UpdateAudioStream(m_stream, m_queue.data(), static_cast<int>(kChunk));
++                m_queue.erase(m_queue.begin(), m_queue.begin() + static_cast<std::ptrdiff_t>(kChunk * 2u));
++            }
++            constexpr size_t kMaxFrames = 48000u;
++            if (m_queue.size() / 2u > kMaxFrames)
++                m_queue.erase(m_queue.begin(), m_queue.end() - static_cast<std::ptrdiff_t>(kMaxFrames * 2u));
++        }
++
++        AudioStream m_stream{};
++        bool m_streamOn = false;
++        bool m_deviceGaveUp = false;
++        std::vector<int16_t> m_queue;
++#endif
++        std::mutex m_mutex;
++        std::ofstream m_wav;
++        bool m_wavTried = false;
++        uint64_t m_frames = 0;
++        uint32_t m_sinceFlush = 0;
++    };
++
++    MixedOutput &mixedOutput()
++    {
++        static MixedOutput output;
++        return output;
++    }
++
++    void onMixedAudio(const int16_t *pcm, size_t frames)
++    {
++        mixedOutput().push(pcm, frames);
++    }
++
++    struct MixedAudioRegistration
++    {
++        MixedAudioRegistration()
++        {
++            ps2x::iop::setMixedAudioFn(&onMixedAudio);
++        }
++        ~MixedAudioRegistration()
++        {
++            ps2x::iop::setMixedAudioFn(nullptr);
++        }
++    };
++
++    MixedAudioRegistration g_mixedAudioRegistration;
++}

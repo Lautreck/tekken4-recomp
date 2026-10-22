@@ -18,6 +18,7 @@
 #define NOUSER // CloseWindow, ShowCursor from windows.h
 #include <windows.h>
 #include <dbghelp.h> // SYMBOL_INFO only: the functions are loaded at run time
+#include <tlhelp32.h>
 #endif
 
 #include <algorithm>
@@ -41,7 +42,9 @@ namespace tekken4
     // binds one client (0x1cccbc0) and only makes synchronous calls: 4 words in at 0x1ccc700 (the per-frame
     // call 0x100 sends a 0x80-byte command queue at 0x1ccc7c0 instead), 8 words back at 0x1ccc780.
     // FUN_002230d0 retries the bind every vsync until client.server != 0, so without a server boot stops there.
-    // Until the real driver runs on ps2xIOP, every call is answered at once with a zeroed reply: no sound.
+    // TEKKEN4_SOUND=1 plus an ISO forwards this SID to zsiopdrv, except mode-0 disc reads and the movie
+    // calls (0x3000/0x3100/0x3200), which stay on the local HLE. Without that env every call is answered
+    // at once with a zeroed reply: no sound.
     constexpr uint32_t kSoundSid = 0x12345u;
     constexpr uint32_t kSceSifBindRpc = 0x00282808u;
     constexpr uint32_t kSceSifCallRpc = 0x002829d8u;
@@ -67,6 +70,23 @@ namespace tekken4
     std::ifstream g_disc;            // the ISO, or else a loose DATA.BIN extracted next to the ELF
     uint64_t g_discBase = 0u;        // byte offset of DATA.BIN inside g_disc
     bool g_discTried = false;
+    bool g_realSound = false;        // TEKKEN4_SOUND=1 and an ISO: SID 0x12345 reaches zsiopdrv
+
+    // TEKKEN4_ISO, else the first .iso in the project root (the ELF lives in <root>/game/disc).
+    std::filesystem::path findIsoPath()
+    {
+        const PS2Runtime::IoPaths &paths = PS2Runtime::getIoPaths();
+        std::error_code ec;
+        if (const char *env = std::getenv("TEKKEN4_ISO"))
+        {
+            if (env[0] != '\0')
+                return env;
+        }
+        for (const auto &entry : std::filesystem::directory_iterator(paths.elfDirectory.parent_path().parent_path(), ec))
+            if (!ec && entry.path().extension() == ".iso")
+                return entry.path();
+        return {};
+    }
 
     // The ISO comes first: it holds the whole disc, so a sector past DATA.BIN (DATA2.BIN follows it) reads as on
     // a console. A loose TEKKEN/DATA.BIN is only a fallback for setups without the image.
@@ -75,18 +95,7 @@ namespace tekken4
         if (g_discTried)
             return g_disc.is_open();
         g_discTried = true;
-        const PS2Runtime::IoPaths &paths = PS2Runtime::getIoPaths();
-        std::filesystem::path source;
-        std::error_code ec;
-        if (const char *env = std::getenv("TEKKEN4_ISO"))
-            source = env;
-        else // the first .iso in the project root (the ELF lives in <root>/game/disc)
-            for (const auto &entry : std::filesystem::directory_iterator(paths.elfDirectory.parent_path().parent_path(), ec))
-                if (entry.path().extension() == ".iso")
-                {
-                    source = entry.path();
-                    break;
-                }
+        std::filesystem::path source = findIsoPath();
         if (!source.empty())
         {
             g_disc.open(source, std::ios::binary);
@@ -94,7 +103,8 @@ namespace tekken4
         }
         if (!g_disc.is_open())
         {
-            source = paths.cdRoot / "TEKKEN" / "DATA.BIN";
+            std::error_code ec;
+            source = PS2Runtime::getIoPaths().cdRoot / "TEKKEN" / "DATA.BIN";
             if (std::filesystem::exists(source, ec))
             {
                 g_disc.open(source, std::ios::binary);
@@ -210,7 +220,43 @@ namespace tekken4
     // Debug aid (TEKKEN4_PROFILE=<start s>:<seconds>): from <start> on, samples the game thread's instruction
     // pointer about every millisecond for <seconds>, then logs the functions it was in most often (names from the
     // PDB through dbghelp). The game thread is taken from the first per-frame sound call.
+    // TEKKEN4_PROFILE_THREADS=all also samples every other thread of the process (GS drawing threads, IOP, ...)
+    // and logs them as a second, combined list.
     std::atomic<HANDLE> g_gameThread{nullptr};
+
+    std::vector<HANDLE> otherProcessThreads(DWORD gameThreadId)
+    {
+        std::vector<HANDLE> threads;
+        const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        if (snapshot == INVALID_HANDLE_VALUE)
+            return threads;
+        THREADENTRY32 entry{};
+        entry.dwSize = sizeof(entry);
+        for (BOOL ok = Thread32First(snapshot, &entry); ok; ok = Thread32Next(snapshot, &entry))
+        {
+            if (entry.th32OwnerProcessID != GetCurrentProcessId() || entry.th32ThreadID == GetCurrentThreadId() ||
+                entry.th32ThreadID == gameThreadId)
+                continue;
+            if (HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, entry.th32ThreadID))
+                threads.push_back(h);
+        }
+        CloseHandle(snapshot);
+        return threads;
+    }
+
+    void sampleThread(HANDLE thread, std::unordered_map<DWORD64, uint32_t> &samples, uint32_t &total)
+    {
+        if (SuspendThread(thread) == static_cast<DWORD>(-1))
+            return;
+        CONTEXT c{};
+        c.ContextFlags = CONTEXT_CONTROL;
+        if (GetThreadContext(thread, &c))
+        {
+            ++samples[c.Rip];
+            ++total;
+        }
+        ResumeThread(thread);
+    }
 
     void captureGameThread()
     {
@@ -227,29 +273,26 @@ namespace tekken4
         const double start = std::atof(spec);
         const char *colon = std::strchr(spec, ':');
         const double seconds = colon ? std::atof(colon + 1) : 10.0;
-        std::thread([start, seconds]() {
+        const char *threadsEnv = std::getenv("TEKKEN4_PROFILE_THREADS");
+        const bool allThreads = threadsEnv && std::strcmp(threadsEnv, "all") == 0;
+        std::thread([start, seconds, allThreads]() {
             std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(start * 1000.0)));
             HANDLE thread = g_gameThread.load();
             if (!thread)
                 return;
-            std::unordered_map<DWORD64, uint32_t> samples;
-            uint32_t total = 0u;
+            std::vector<HANDLE> others = allThreads ? otherProcessThreads(GetThreadId(thread)) : std::vector<HANDLE>{};
+            std::unordered_map<DWORD64, uint32_t> samples, otherSamples;
+            uint32_t total = 0u, otherTotal = 0u;
             const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<int>(seconds * 1000.0));
             while (std::chrono::steady_clock::now() < end)
             {
-                if (SuspendThread(thread) != static_cast<DWORD>(-1))
-                {
-                    CONTEXT c{};
-                    c.ContextFlags = CONTEXT_CONTROL;
-                    if (GetThreadContext(thread, &c))
-                    {
-                        ++samples[c.Rip];
-                        ++total;
-                    }
-                    ResumeThread(thread);
-                }
+                sampleThread(thread, samples, total);
+                for (HANDLE other : others)
+                    sampleThread(other, otherSamples, otherTotal);
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
+            for (HANDLE other : others)
+                CloseHandle(other);
             HMODULE dbghelp = LoadLibraryA("dbghelp.dll");
             using SymInitializeFn = BOOL(WINAPI *)(HANDLE, PCSTR, BOOL);
             using SymFromAddrFn = BOOL(WINAPI *)(HANDLE, DWORD64, PDWORD64, void *);
@@ -260,37 +303,47 @@ namespace tekken4
             const HANDLE process = GetCurrentProcess();
             const bool symbols = symInitialize && symFromAddr && (symSetOptions ? (symSetOptions(0x2 /*UNDNAME*/ | 0x4 /*DEFERRED*/), true) : true) &&
                                  symInitialize(process, nullptr, TRUE);
-            std::unordered_map<std::string, uint32_t> byFunction;
-            for (const auto &[ip, count] : samples)
+            auto report = [&](const std::unordered_map<DWORD64, uint32_t> &hits, uint32_t count, const char *what,
+                              const char *tag) {
+                std::unordered_map<std::string, uint32_t> byFunction;
+                for (const auto &[ip, n] : hits)
+                {
+                    std::string name;
+                    if (symbols)
+                    {
+                        alignas(8) char buffer[sizeof(SYMBOL_INFO) + 512] = {};
+                        auto *info = reinterpret_cast<SYMBOL_INFO *>(buffer);
+                        info->SizeOfStruct = sizeof(SYMBOL_INFO);
+                        info->MaxNameLen = 511;
+                        DWORD64 displacement = 0;
+                        if (symFromAddr(process, ip, &displacement, info))
+                            name = info->Name;
+                    }
+                    if (name.empty())
+                    {
+                        std::ostringstream o;
+                        o << "0x" << std::hex << ip;
+                        name = o.str();
+                    }
+                    byFunction[name] += n;
+                }
+                std::vector<std::pair<uint32_t, std::string>> sorted;
+                for (const auto &[name, n] : byFunction)
+                    sorted.emplace_back(n, name);
+                std::sort(sorted.rbegin(), sorted.rend());
+                RUNTIME_LOG("[tekken4] " << tag << ": " << count << " samples of " << what << "\n");
+                for (size_t i = 0; i < sorted.size() && i < 30u; ++i)
+                    RUNTIME_LOG("[tekken4] " << tag << " " << std::fixed << std::setprecision(1)
+                                             << 100.0 * sorted[i].first / std::max<uint32_t>(count, 1u) << "% "
+                                             << sorted[i].second << "\n");
+            };
+            report(samples, total, "the game thread", "profile");
+            if (allThreads)
             {
-                std::string name;
-                if (symbols)
-                {
-                    alignas(8) char buffer[sizeof(SYMBOL_INFO) + 512] = {};
-                    auto *info = reinterpret_cast<SYMBOL_INFO *>(buffer);
-                    info->SizeOfStruct = sizeof(SYMBOL_INFO);
-                    info->MaxNameLen = 511;
-                    DWORD64 displacement = 0;
-                    if (symFromAddr(process, ip, &displacement, info))
-                        name = info->Name;
-                }
-                if (name.empty())
-                {
-                    std::ostringstream o;
-                    o << "0x" << std::hex << ip;
-                    name = o.str();
-                }
-                byFunction[name] += count;
+                std::ostringstream what;
+                what << others.size() << " other threads";
+                report(otherSamples, otherTotal, what.str().c_str(), "profile-threads");
             }
-            std::vector<std::pair<uint32_t, std::string>> sorted;
-            for (const auto &[name, count] : byFunction)
-                sorted.emplace_back(count, name);
-            std::sort(sorted.rbegin(), sorted.rend());
-            RUNTIME_LOG("[tekken4] profile: " << total << " samples of the game thread\n");
-            for (size_t i = 0; i < sorted.size() && i < 30u; ++i)
-                RUNTIME_LOG("[tekken4] profile " << std::fixed << std::setprecision(1)
-                                                 << 100.0 * sorted[i].first / std::max<uint32_t>(total, 1u) << "% "
-                                                 << sorted[i].second << "\n");
         }).detach();
     }
 #endif
@@ -430,23 +483,55 @@ namespace tekken4
         }
 
         const uint32_t client = getRegU32(ctx, 4);
-        uint8_t *cd = getMemPtr(rdram, client);
-        if (!cd)
+        if (!g_realSound)
         {
-            setReturnS32(ctx, -1);
+            uint8_t *cd = getMemPtr(rdram, client);
+            if (!cd)
+            {
+                setReturnS32(ctx, -1);
+                return;
+            }
+            // Any non-zero server ends the retry loop. Nothing dereferences it: calls on this client stop here.
+            std::memset(cd + kClientBodyOffset, 0, kClientBodySize);
+            std::memcpy(cd + kClientServerOffset, &client, sizeof(client));
+
+            std::lock_guard<std::mutex> lock(g_mutex);
+            if (g_soundClients.insert(client).second)
+            {
+                RUNTIME_LOG("[tekken4] sound RPC 0x12345 bound to silent HLE server, client 0x" << std::hex << client
+                                                                                                << std::dec << "\n");
+            }
+            setReturnS32(ctx, 0);
             return;
         }
-        // Any non-zero server ends the retry loop. Nothing dereferences it: calls on this client stop here.
-        std::memset(cd + kClientBodyOffset, 0, kClientBodySize);
-        std::memcpy(cd + kClientServerOffset, &client, sizeof(client));
 
+        // Real bind records the client under SID 0x12345 even when the IRX has not called
+        // sceSifRegisterRpc yet. This ELF spins at 0x2230f0 until client.server != 0, and the module
+        // load that would register the SID is not reached while that spin runs. A zeroed placeholder
+        // (not the client itself: SifCallRpc writes through server) lets boot continue. Calls still
+        // dispatch on the SID, so they hit zsiopdrv once its entry has registered.
+        ps2_stubs::sceSifBindRpc(rdram, ctx, runtime);
+        uint32_t server = 0u;
+        uint8_t *cd = getMemPtr(rdram, client);
+        if (cd)
+            std::memcpy(&server, cd + kClientServerOffset, sizeof(server));
+        const bool registered = server != 0u;
+        if (!registered && cd && runtime)
+        {
+            const uint32_t placeholder = runtime->guestCalloc(1u, 64u, 16u);
+            if (placeholder != 0u)
+            {
+                std::memcpy(cd + kClientServerOffset, &placeholder, sizeof(placeholder));
+                server = placeholder;
+            }
+        }
         std::lock_guard<std::mutex> lock(g_mutex);
         if (g_soundClients.insert(client).second)
-        {
-            RUNTIME_LOG("[tekken4] sound RPC 0x12345 bound to silent HLE server, client 0x" << std::hex << client
-                                                                                            << std::dec << "\n");
-        }
-        setReturnS32(ctx, 0);
+            RUNTIME_LOG("[tekken4] sound RPC 0x12345 bound, client 0x" << std::hex << client << " server 0x" << server
+                                                                        << (registered ? " (zsiopdrv)" : " (placeholder, zsiopdrv not registered yet)")
+                                                                        << std::dec << "\n");
+        if (!registered && server == 0u)
+            setReturnS32(ctx, -1);
     }
 
     void sifCallRpc(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
@@ -474,6 +559,100 @@ namespace tekken4
         const uint32_t reply = getRegU32(ctx, 9);
         const uint32_t replySize = getRegU32(ctx, 10);
         const uint32_t endFunction = getRegU32(ctx, 11);
+        // Mode 0 of 0x200 writes EE RAM the loader checksums; that copy stays here. Other modes are sound
+        // banks the local HLE used to drop, so zsiopdrv has to receive them or the mixer stays silent.
+        bool forward = false;
+        uint32_t discMode = 0u;
+        if (g_realSound)
+        {
+            if (function == kDiscReadCall)
+            {
+                if (const uint8_t *send = getMemPtr(rdram, getRegU32(ctx, 7)))
+                    std::memcpy(&discMode, send + 12, 4);
+                forward = discMode != 0u;
+            }
+            else if (function != kMovieOpenCall && function != kMovieReadCall && function != kMovieCloseCall)
+                forward = true;
+        }
+        if (forward)
+        {
+            {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                if (g_loggedCalls.insert(function).second)
+                    RUNTIME_LOG("[tekken4] sound RPC call 0x" << std::hex << function
+                                                               << " forwarded to zsiopdrv, reply 0x" << reply
+                                                               << " size 0x" << replySize << std::dec << "\n");
+            }
+            if (function == kDiscReadCall)
+            {
+                static int forwardedReads = 0;
+                if (forwardedReads < 8)
+                {
+                    ++forwardedReads;
+                    uint32_t sector = 0u, size = 0u;
+                    if (const uint8_t *send = getMemPtr(rdram, getRegU32(ctx, 7)))
+                    {
+                        std::memcpy(&sector, send, 4);
+                        std::memcpy(&size, send + 8, 4);
+                    }
+                    RUNTIME_LOG("[tekken4] disc read mode " << discMode << " forwarded, sector " << sector
+                                                            << " size " << size << "\n");
+                }
+            }
+            ps2_syscalls::sceSifCallRpc(rdram, ctx, runtime);
+            if (function == kDiscReadCall)
+            {
+                uint32_t done = 0u;
+                std::memcpy(&done, rdram + kDiscReadDoneFlag, 4);
+                ++done;
+                std::memcpy(rdram + kDiscReadDoneFlag, &done, 4);
+            }
+            if (function == kSoundFrameCall && g_movieSize != 0u && replySize >= 16u)
+            {
+                if (uint8_t *dst = getMemPtr(rdram, reply))
+                {
+                    uint32_t status = 0u;
+                    std::memcpy(&status, dst + kFrameReplyStatusWord * 4u, 4);
+                    status |= kStatusMovieAudioReady | (g_movieEnded ? kStatusMovieEnded : 0u);
+                    std::memcpy(dst + kFrameReplyStatusWord * 4u, &status, 4);
+                }
+            }
+            std::lock_guard<std::mutex> lock(g_mutex);
+#ifdef _WIN32
+            if (function == kSoundFrameCall)
+                captureGameThread();
+#endif
+            if (function == kSoundFrameCall && ++g_frames == g_nextFrameLog)
+            {
+                const auto now = std::chrono::steady_clock::now();
+                if (g_frames == 1u)
+                    g_firstFrame = now;
+                const double seconds = std::chrono::duration<double>(now - g_firstFrame).count();
+                if (g_frames == 1u)
+                    RUNTIME_LOG("[tekken4] main loop frame 1\n");
+                else
+                    RUNTIME_LOG("[tekken4] main loop frame " << g_frames << " after " << seconds << " s ("
+                                                             << (g_frames - 1u) / seconds << " fps)\n");
+                g_nextFrameLog *= 10u;
+            }
+            if (function == kSoundFrameCall && g_gsDumpFrame != 0u && g_frames + 2u == g_gsDumpFrame)
+            {
+                runtime->gs().clearDebugHistory();
+                runtime->gs().setDebugHistoryPaused(false);
+                std::lock_guard<std::mutex> gifLock(g_gifLogMutex);
+                g_gifLog.open("gif_packets_frame" + std::to_string(g_gsDumpFrame) + ".txt");
+            }
+            if (function == kSoundFrameCall && g_frames == g_gsDumpFrame)
+            {
+                runtime->gs().setDebugHistoryPaused(true);
+                {
+                    std::lock_guard<std::mutex> gifLock(g_gifLogMutex);
+                    g_gifLog.close();
+                }
+                dumpGs(*runtime, g_frames);
+            }
+            return;
+        }
         if (uint8_t *dst = replySize ? getMemPtr(rdram, reply) : nullptr)
         {
             std::memset(dst, 0, replySize < kMaxReplySize ? replySize : kMaxReplySize);
@@ -545,7 +724,8 @@ namespace tekken4
     void sifCheckStatRpc(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         ctx->pc = getRegU32(ctx, 31);
-        if (!isSoundClient(getRegU32(ctx, 4)))
+        // The real driver can still be inside SifCallRpc. The silent HLE finishes every call before it returns.
+        if (g_realSound || !isSoundClient(getRegU32(ctx, 4)))
         {
             ps2_stubs::sceSifCheckStatRpc(rdram, ctx, runtime);
             return;
@@ -870,7 +1050,38 @@ namespace tekken4
 
     void apply(PS2Runtime &runtime)
     {
+        if (const char *sound = std::getenv("TEKKEN4_SOUND"); sound && std::strcmp(sound, "1") == 0)
+        {
+            const std::filesystem::path iso = findIsoPath();
+            if (!iso.empty())
+            {
+                PS2Runtime::IoPaths paths = PS2Runtime::getIoPaths();
+                paths.cdImage = iso;
+                PS2Runtime::setIoPaths(paths);
+                g_realSound = true;
+                RUNTIME_LOG("[tekken4] TEKKEN4_SOUND=1: SID 0x12345 goes to zsiopdrv, cdImage " << iso.string()
+                                                                                                << "\n");
+            }
+            else
+                RUNTIME_LOG("[tekken4] TEKKEN4_SOUND=1 but no ISO; silent HLE stays\n");
+        }
+        if (const char *wav = std::getenv("TEKKEN4_SOUND_WAV"); wav && wav[0] != '\0')
+        {
+            std::filesystem::path wavPath(wav);
+            if (wavPath.is_relative())
+                wavPath = PS2Runtime::getIoPaths().elfDirectory.parent_path().parent_path() / wavPath;
+            const std::string absolute = wavPath.lexically_normal().string();
+#ifdef _WIN32
+            _putenv_s("TEKKEN4_SOUND_WAV", absolute.c_str());
+#else
+            setenv("TEKKEN4_SOUND_WAV", absolute.c_str(), 1);
+#endif
+        }
         runtime.registerFunction(0x00292900u, closeDmaTag);
+        // The VIF1 packet builder's close (same code, other copy): FUN_002344e0's texture-flush CNT came out qwc 4
+        // instead of 2, VIF1 then read the next REF tags as data and the fight stalled ~4 s in (found by Grok, task
+        // cnt-qwc).
+        runtime.registerFunction(0x00292c18u, closeDmaTag);
         runtime.registerFunction(kSceMpegGetPicture, mpegGetPicture);
         runtime.registerFunction(kIpuImagesDecode, ipuImagesDecode);
         if (const char *presentLog = std::getenv("TEKKEN4_PRESENT_LOG"))

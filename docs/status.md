@@ -642,6 +642,19 @@ Progress (2026-10-21, commits a31b778, fda9e02):
   write ~90; **fight 18-21 fps** (GS 560 ms per second, was 800); main menu and stage render as before.
 - Not upstreamed yet (builds on patch 09, which is not upstream either).
 
+## Game-thread copies (patch 15, session 4, 2026-10-22)
+- Grok game-thread (analysis, logs/grok/game-thread_20261022_013250.json) -> game-thread-fixes (work,
+  logs/grok/game-thread-fixes-notes.md): GIF packets drained immediately without the arbiter's heap copy, VIF1
+  UNPACK V4-32 / 32-bit memcpy fast path, fromSPR span memcpy + drainMfifo reusing its buffer. Fight s50-94 mean fps
+  20.33 -> 22.42 -> 22.91 -> 22.93 (Grok runs; shared tree, gs-throughput was editing at the same time).
+- Its 4th fix (EE timer batching up to the next compare/overflow) broke 2 tests ("EE Timer2 compare and overflow
+  flags raise INTC_TIM2 ...", "EE Timer2 compare IRQ wakes a DelayThread-style semaphore wait") on a clean 01-15
+  worktree; Grok's IRQ counters read 0 before and after, so its own check could not see it. Timer ticks are applied
+  on every call again (the batching scaffolding stays, inert).
+- **Patch 15** (`patches/15-ps2xRuntime-game-thread-copies.patch`): 467/467 on a clean worktree
+  (`external/ps2recomp-p15check`: upstream HEAD + patches 01-15; reverse-apply / apply there to validate a patch
+  stack without the other tasks' in-progress edits; its build_pr_tests.cmd is local).
+
 ## Grok in the pipeline (from 2026-10-21)
 The user added Grok (xAI Grok Build CLI 1.0.62, `C:\Users\pablo\.grok\bin\grok.exe`, signed in with the user's
 grok.com account, default model grok-4.7) as a parallel worker, second opinion and reviewer; it may see everything that

@@ -17,14 +17,24 @@ So there is no exact local copy of the plan percent. The meter estimates, then s
 
 ## Windows
 
-5-hour block (fallback, because the binary never buckets transcripts; the server sends `resets_at`):
+The binary never buckets transcripts. The server sends `resets_at`. This meter uses that clock only after the user passes it in.
+
+Unanchored 5-hour block (no `resets_at` stored). ccusage's rule. ccusage's source was not fetched (no network). The gap check in that tool is redundant: the gap since the previous entry cannot exceed the time since the block start.
 
 - Sort deduped assistant timestamps.
 - A block starts at the first entry. It ends 5 hours later.
-- The next entry at or after that end starts the next block (the block does not start at the empty reset instant; it starts at the next message). This is ccusage's blocks rule. ccusage's source was not fetched this session (no network). The gap check in that tool is redundant: the gap since the previous entry cannot exceed the time since the block start.
-- The open block is the one that contains now. Its reset clock is start+5h, shown in local `HH:MM`. If the last block has already ended, the current 5-hour usage is 0 and the reset is `--:--` until the next message.
+- The next entry at or after that end starts the next block. The block does not start at the empty reset instant. It starts at the next message.
+- The open block is the one that contains now. Its reset clock is start+5h, shown in local `HH:MM`. If the last block has already ended, the 5-hour weight is 0 and the reset is `--:--` until the next message.
 
-Weekly figure: sum of weights with `timestamp >= now-7d` (rolling). The server's `seven_day.resets_at` is a fixed reset, not a rolling window. Calibration does not fix that mismatch.
+Anchored 5-hour block (`--resets HH:MM`, local time). The next occurrence strictly after now is stored as `five_hour.resets_at`, the current window's end. Until that instant the window is `[end-5h, end)`. Messages outside it are not counted. `--status` prints that end as `resets HH:MM`.
+
+After that instant the server's next reset is not on disk. The next window starts at the first assistant message at or after the stored end and lasts 5 hours. That is Claude's rule as far as known: a window starts when the next message arrives, not at the empty reset. It was not re-checked in the binary when this anchor was added. Each later window starts the same way, at the first assistant message at or after the previous end, and lasts 5 hours. A gap with no assistant message is weight 0 and `resets --:--`.
+
+A later `--calibrate` without `--resets` keeps the stored end and takes the budget from whichever of those windows is open. Pass `--resets` again when `/usage` shows a new clock time.
+
+Weekly, unanchored: sum of weights with `timestamp >= now-7d` (rolling). The server's `seven_day.resets_at` is a fixed reset, not a rolling window.
+
+Weekly, anchored (`--weekly-resets "YYYY-MM-DD HH:MM"`, local, optional, with `--weekly`): that civil time is the weekly window end, interpreted in the machine's local timezone. Until then the week is `[end-7d, end)`. After it, the next week starts at the first assistant message at or after that end and lasts 7 days, then the same again. A later `--weekly` without `--weekly-resets` keeps the stored weekly end. The status line does not print the weekly reset.
 
 ## Tokens
 
@@ -63,17 +73,21 @@ Changelog v2.1.284 line 1630 says Sonnet 5.5 cache reads are $0.20/Mtok. The 2.1
 
 ## Calibration
 
-`python -I tools/usage_meter.py --calibrate <5h percent from /usage> [--weekly <week percent>]`
+`python -I tools/usage_meter.py --calibrate <5h percent> [--resets HH:MM] [--weekly <week percent>] [--weekly-resets "YYYY-MM-DD HH:MM"] [--note TEXT]`
 
-Stores `logs/usage_calibration.json`: the weighted USD in the open 5-hour block (and the rolling week, if given) next to the percent you saw, plus `budget_usd = weighted / (percent/100)` and `at`. Later percent = current weight / budget, rounded half up. The status age is the 5-hour `at` (else the weekly `at`): `0m`, `Nm`, `Nh`, `Nd`.
+Stores `logs/usage_calibration.json`: the weighted USD in the open 5-hour window (anchored when a `resets_at` is in force) next to the percent, plus `budget_usd = weighted / (percent/100)`, `at`, and when set `resets_at` and `note`. The weekly side is the same shape when `--weekly` is passed. Later percent = current weight / budget, rounded half up. The status age is the 5-hour `at` (else the weekly `at`): `0m`, `Nm`, `Nh`, `Nd`. `at` is when this command ran. `--note` is for the reading itself when that was earlier (example: `reading 2026-10-22 01:46 local`). The note is stored on the 5-hour object only, and only when `--note` is passed.
 
-Refuses (exit 1, nothing written) if the window you are calibrating has zero weight. A new `--calibrate` replaces the 5-hour side and, only when `--weekly` is passed, the weekly side. Recalibrate after a plan change or when the estimate and `/usage` disagree by more than a few points: one point assumes the quota is linear in this weight and that our block matches the server block.
+`--resets HH:MM` is the local reset time from `/usage`. `--resets` requires `--calibrate`. `--weekly-resets` requires `--weekly`. `--note` requires `--calibrate`. `--weekly` requires `--calibrate`.
+
+Refuses (exit 1, nothing written) if the window being calibrated has zero weight. A new `--calibrate` replaces the 5-hour percent, weight, budget, and `at`. It keeps the previous 5-hour `resets_at` unless `--resets` is passed. It drops a previous note unless `--note` is passed. The weekly side is replaced only when `--weekly` is passed, and it keeps a previous weekly `resets_at` unless `--weekly-resets` is passed.
+
+Recalibrate after a plan change, when `/usage` shows a new reset clock, or when the estimate and `/usage` disagree by more than a few points. One point assumes the quota is linear in this weight and that the window in force matches the server window. The anchored window matches the clock the user stored until `resets_at`. After that, it matches only the next-message rule above.
 
 `--status` line:
 
 `5h ~NN% (resets HH:MM), week ~NN%, calibrated <age>`
 
-Uncalibrated sides show `n/a`. No open block shows `resets --:--` and a 5-hour weight of 0.
+Uncalibrated sides show `n/a`. No open block shows `resets --:--` and a 5-hour weight of 0. An anchored window that has not reached its stored end stays open when its weight is 0, and the status still prints that end.
 
 ## Hook
 
@@ -99,7 +113,7 @@ Event `UserPromptSubmit`. No matcher (a missing matcher is `*` in this build). T
 
 Install target is the user or project Claude settings. This repo does not edit those files.
 
-Stdout is empty unless a threshold in `(50, 60, 70, 75, 78, 85, 90, 95)` was crossed since the last notice. State: `logs/usage_meter_state.json` (5-hour notices reset when the block start changes; a notice is armed again if the percent falls under it). One JSON object, which this build accepts for UserPromptSubmit (`hookEventName` + `additionalContext` in the zod schema near `claude.exe` offset 247148202; plain stdout would also be wrapped as additionalContext, offset 279319491):
+Stdout is empty unless a threshold in `(50, 60, 70, 75, 78, 85, 90, 95)` was crossed since the last notice. One line per run: if several thresholds are crossed together, the line is the current percent (the hand-off wording when that percent is at or above 78) and every crossed threshold is marked noticed, so each fires once per window. State: `logs/usage_meter_state.json`. 5-hour notices clear when the block start changes, and a notice is armed again if the percent falls under it. That start is the anchored window's `end-5h` while the stored end is still ahead, then the timestamp of the first assistant message of each later block. An anchored week clears its notices when its block start changes. A rolling week has no block start; its notices stay until the percent falls under the threshold. One JSON object, which this build accepts for UserPromptSubmit (`hookEventName` + `additionalContext` in the zod schema near `claude.exe` offset 247148202; plain stdout would also be wrapped as additionalContext, offset 279319491):
 
 ```json
 {"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"Usage ~78% of the 5-hour window (estimate): hand off per the 78% rule"}}
@@ -122,8 +136,9 @@ Overrides for tests: `--root`, `--cache`, `--state`, `--calibration`, `--now` (I
 ## Limits
 
 - The percent is an estimate. The plan meter is the server utilization header, which is not on disk.
-- A block that starts at the next message, rather than at the server's `resets_at`, runs long by the gap between the reset and that message.
-- Rolling 7 days is not the server week.
+- Without `--resets`, the ccusage block does not match `/usage`. The meter can reset early and under-count until the real reset.
+- With `--resets`, the window matches the clock the user read until that instant. After it, the next window waits for the next assistant message, so it can start late by that gap until the next `--resets`.
+- Without `--weekly-resets`, rolling 7 days is not the server week. The stored civil time uses the machine's local timezone (`naive.astimezone()`).
 - One calibration point. It goes stale if the plan quota changes, if the wrong window was on screen, or if most of the weight is a model whose price ratio does not match how the plan actually burns.
 - Cache-write price follows the 5m/1h split. A missing split is priced as 5m.
 - Tokens still only in a not-yet-flushed jsonl line are invisible until the next append.

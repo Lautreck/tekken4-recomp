@@ -98,3 +98,67 @@ At 24 fps the frame is 41.7 ms. GS ~556/24 = 23.2 ms, so the rest of the game th
 Contra: this exe also contains runtime/tekken4_overrides.cpp (mtime 04:38:49) and runtime/tekken4_camera_overrides.cpp (mtime 04:02:18). throughput-5's exe was 02:52. Prims/frame and non-GS ms/frame match, which is why the GS drop is attributed to the GS edit, but it is not a one-variable rebuild.
 
 Shots shot_40/95/105.png are 6185-byte PrintWindow whites. frame_40.bmp and frame_95.bmp are 860214 bytes (640x448 24-bit). frame_40 is the MODE SELECT menu (ARCADE, Kazuya/Paul portraits, readable text). frame_95 is the Aqua Garden fight (Kazuya vs Law, timer 48, HUD readable). No earlier present dump exists, so there is no byte compare. The fight dump moves with fps. Camera is still too close (arm fills the left). Not fixed here.
+
+## Step 5 — snapshot read-only upload pages (no wait)
+
+Upload drains (~300/s at 24 fps) are read hits: queued primitives sample the destination, they do not draw into it. Those uploads now copy the 8 KiB pages onto a chain tagged with the job epoch and write live VRAM under a per-page seqlock. Write hits still wait. Snapshots are dropped on the next drain (present Sync is one). Stats line gains `shadow`. overrides.cpp mtime 07:06:17 is newer than the step-4 exe, so fight numbers are not a one-variable compare against throughput-6.
+
+### throughput-7 (same keys, shots 40,95; exe 07:26:43 len 49292288; DRAIN_STATS=1 PERF_LOG=120; ran 95.5s)
+Killed at perf 88, before frameshot 95 (only frame_40s.bmp). Menu sec 1-10: 60 fps, GS 226-305. Select sec 37-40 (stdout 195-205): ~40 fps, GS ~700, prims ~16-18k, upload ~2200, shadow 0. From sec 47 the prims jump to ~200k and stay ~240-270k through sec 88 at 24-27 fps, GS 595-637, upload ~185-226, shadow ~1100-1300, sample ~70-80, write ~66-78, clut ~0, other ~25. Not the throughput-6 829k window (that ramp is sec 80-83 of throughput-6). frame_40s = character select, Kazuya, timer 27.
+
+### throughput-8 (shots 40,95,130; same exe; params 07:37:09 commit 5082506; ran 139s)
+Menu sec 1-10 stdout 95-113: 60 fps, GS 231,259,266,277,272,227,224,296,272,244.
+Character select sec 39-46 stdout 202-218: 33-38 fps, GS 719-752, prims ~14.5-16.5k, upload ~2100-2360, shadow 0, sample 0, write ~34-39.
+Did not leave that screen until sec 92-93 (stdout 330-333): sec 92 is 18 fps GS 217 prims 19182; sec 93 is 30 fps GS 569 prims 290408 shadow 9564. Then sec 100-119 (stdout 347-386): 31-36 fps, GS 560-620, prims 268k-333k, upload 174-216, shadow 9164-11376, sample ~30-36, write ~30-36, other ~43-61, clut 0.
+frame_40s.bmp = character select Kazuya timer 28. Diff vs throughput-7 frame_40s: pct_diff 25.597, mean_abs 9.327, psnr 22.24 (timer digit + the select backdrop animates; portrait, grid, KAZUYA plate match).
+frame_95s.bmp = COMMAND LIST tutorial ("Press START to close this instruction"), not the fight. throughput-6 frame_95.bmp (old FRAME_DUMP, no s) is Aqua Garden Kazuya vs Law timer 48. The 270-330k window is that tutorial's 3D backdrop. Same keys never pressed Start again, so the fight did not start. throughput-9 adds 100:Start and PERF_LOG=180.
+
+### throughput-9 (same exe as throughput-8, keys plus 100:Start, shots 40,95,160, PERF_LOG=180, ran 160.2s)
+Menu sec 1-5 stdout 95-103: 60 fps, GS 222,228,240,232,242. shadow ~9240, upload 240 (same menu shape as throughput-7/8).
+Fight DID start. frame_95s.bmp is Kazuya vs Kazuya, timer 00, night rooftop (not Aqua Garden, not the command list). HUD and both fighters readable. frame_160s.bmp was not written: script killed at 160.2s, frameshot clock had not reached 160 (stdout has only frame_40s and frame_95s).
+Round start before the extra Start, stdout 335-345:
+- sec 94: 21 fps, GS 643, prims 283338, other 20, sample 36, write 42, upload 173, clut 11, shadow 1262
+- sec 95: 18 fps, GS 666, prims 278189, upload 180, shadow 666
+- sec 96: 18 fps, GS 654, prims 280214, upload 190, shadow 702
+- sec 97: 19 fps, GS 654, prims 286935, upload 180, shadow 667
+- sec 98: 17 fps, GS 686, prims 271923, upload 180, shadow 666
+- sec 99: 19 fps, GS 647, prims 267762, upload 185, shadow 702
+Start landed at 100.7s, after the round had already begun, so it paused. Sec 127-146 stay in the same band (19-22 fps, GS 619-675, prims 275k-323k, upload 190-220, shadow 667-813, sample ~40, write ~50, clut ~7-14, other ~20). Not throughput-6's 829k Aqua Garden.
+Versus throughput-6 at ~260-320k prims (stdout 296-310): sec 75 is 23 fps GS 713 upload 308 prims 258700; sec 81 is 25 fps GS 640 upload 287 prims 317028. Step 5 here: upload waits ~300 to ~180, shadow ~700, GS ~640-713 to ~643-686, fps 23-25 to 17-21. fps did not rise. Contra: different stage and characters, timer still 00, Start then paused, not a matched Aqua Garden second.
+
+## Step 6 — drop finished jobs from the page counts; skip a write-hit upload whose pixel box misses
+
+Page masks were bits set until the next drain, so a finished draw still forced later uploads to wait. Counts increment per queued job and decrement once every worker has drawn it. A remaining write hit whose pixel box misses the upload (same DBW/PSM, X inside the buffer width) does not wait. X past DBW*64 aliases to the next page row, so that case keeps the page wait. A fake write hit that is still a queued sample snapshots, it does not skip the snapshot. Stats gain `box`.
+Tests: logs/grok/gs-tests-run7.txt after the alias fix: Total 478, Passed 478, Failed 0. Includes the new "upload beside queued sprites" test and "UV-tight page marks match serial when the whole texture covers the frame" (that one failed on the first cut, which skipped the snapshot; the second cut passes).
+
+Game exe: external/PS2Recomp/out/grok-gs-throughput/ps2xRuntime/ps2EntryRunner.exe 2026-10-22 07:59:53 length 49303040. Capture logs/grok/gs-throughput-10 (no extra Start, shots 40,95,175, DRAIN_STATS=1, PERF_LOG=200, ran 175.2s, exit 0). frame_40s.bmp is MODE SELECT (not character select). frame_95s.bmp is Aqua Garden, Kazuya vs Law, timer 48, Law on the ground (same stage and timer as gs-throughput-6 frame_95.bmp, different pose). frame_175s.bmp was not written (last perf second 172; wall 175 closed the process first).
+
+Menu sec 1-9 stdout 96-113: 60 fps, GS 207-218. Steady fight sec 120-160 stdout 389-469: 25-27 fps, GS 627-658. Example sec 150: 27 fps, GS 650, prims 505876, other 27, sample 70, write 54, upload 252, clut 0, shadow 165, box 0. Sec 90-93 (around the frameshot): 26-27 fps, GS 728-736, prims 258k-299k, upload 233-250, shadow ~1030, box 0. box is 0 on every second. bq/ba/bb/bo were not printed yet.
+
+Versus gs-throughput-6 sec 90-93 (24 fps, GS 554-564, prims ~829k, upload 288-320): this run's steady window is ~480k prims not ~829k, and the pose at timer 48 is not the same frame, so the fps delta is not a GS win. Per frame at sec 150: GS 650/27 = 24.1 ms, upload 252/27 = 9.3. t6 sec 90: GS 554/24 = 23.1 ms, upload 320/24 = 13.3, at 829094/24 = 34k prims/frame versus 505876/27 = 19k here. box never fired: UploadMissesInFlightPixels returned false when in-flight jobs exceeded 256, and drains imply ~1200 jobs between waits (505876 prims / (27+70+54+252) drains).
+
+## Step 6b — scan up to 8192 in-flight jobs with a page bitset
+
+Same pixel test (buffer identity, disjoint box, X inside DBW*64, 4-bit pad). The 256 cap is 8192. Each job stores the write pages MarkPages set, as two 512-bit sets, so the scan does not walk rectangles. A wrapped box rejects the skip only for a job that shares a page. Stats add bq (queue over the cap), ba (X alias), bb (different buffer), bo (same buffer, boxes meet). Tests logs/grok/gs-tests-run8.txt: Total 478 Passed 478 Failed 0. Exe 2026-10-22 08:15:34 length 49304064.
+
+logs/grok/gs-throughput-11 (shots 40,95,140, ran ~140s). Menu sec 1-9: 60 fps, GS 205-220. Steady fight sec 120-137: 26-27 fps, GS 637-654, prims ~470-488k, upload 234-247, sample ~50-70, write ~52, shadow 135-1120, box 0, bq 0, ba 0, bb 0, bo 0 (stdout 389-424). Same band as throughput-10. The scan never ran: those upload waits are write-page hits on calls that store no pixels (canWrite is false, so UploadMisses is not called and no fail counter increments). Bought nothing.
+
+## Step 6c — do not drain on an UploadImage that stores no pixels
+
+Early return before the page check. Counter nw. Tests logs/grok/gs-tests-run9.txt: 478/478.
+
+logs/grok/gs-throughput-12 (shots 40,95,140). frame_95s.bmp is Aqua Garden Kazuya vs Law, timer 48, Law down (same scene as throughput-10/11). Menu sec 1-9 stdout 96-112: 60 fps, GS 163-171 (was 205-220), upload 0 (was 240), shadow ~9480, nw ~900. Steady fight sec 110-138 stdout 369-425: 26-27 fps, GS 634-656, prims ~450-494k, upload 0 (was ~234), sample ~35-70, write ~52-54, clut ~26-54, shadow ~350-1400, nw ~700-750, box 0. Upload waits are gone. Fight fps and GS ms did not move: those waits were not the raster. Menu GS fell ~40 ms/s under an already-60 cap.
+
+## Step 7 — skip the texture sample when the depth test already rejects the pixel
+
+DepthRejects uses the same ZTST comparison as WritePixel (never / always / gequal / greater). A reject stores nothing, which is what WritePixel does on a failed depth test. Passing pixels still go through WritePixel.
+
+logs/grok/gs-throughput-13 (reject, second depth read still inside WritePixel). Menu sec 1-9: 60 fps, GS 172-182. Steady fight sec 110-129 stdout 369-407: 28-30 fps, GS 606-628, prims ~482-534k, upload 0. frame_95s.bmp Aqua Garden, Kazuya vs Law, timer 47, both fighters readable.
+
+## Step 7b — do not read depth again on a pixel that already passed
+
+WritePixel(zAlreadyPassed=true) skips the second Z read and still writes Z when the mask says so. Tests logs/grok/gs-tests-run10.txt and gs-tests-run11.txt: 478/478.
+
+logs/grok/gs-throughput-14. Menu sec 1-9 stdout 96-112: 60-61 fps, GS 165-177. frame_40s.bmp is MODE SELECT, text and portraits readable. Steady fight sec 110-129 stdout 369-407: 28-30 fps, GS 604-627. Sec 120: 29 fps, GS 609, prims 545479, other 30, sample 66, write 57, upload 0, clut 30, shadow 358, nw 810. frame_95s.bmp Aqua Garden, Kazuya vs Law, timer 46, both fighters and the HUD readable. Versus throughput-12 sec 120 (27 fps, GS 636, prims 487234): about +2 to +3 fps and GS ~640 -> ~610 at the same ~18k prims/frame. The second-read removal did not move past throughput-13.
+
+60 fps is not reached. At 30 fps, GS is ~20 ms/frame and the rest of the frame is ~13 ms, so the ceiling if the GS wait were free is ~75 fps on this pose. The remaining GS time is pixels that pass the depth test (SampleTexture + WritePixel). The 829k-prim close-up in gs-throughput-6 (24 fps, GS 554) is a heavier pose than this ~500k window and is not the same comparison.

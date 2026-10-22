@@ -17,3 +17,7 @@ Build/run: `cmd /c tools\stage_generated.cmd` then `cmd /c tools\build_runtime.c
 LIMITS: work mode; edit only the OWNS files (+ logs/grok/); keep the tree compiling between builds (Claude and the sound task build the same tree); no new dependencies; GPU renderer is out of scope.
 PACING: multi-hour task. Do not return the final JSON until the DOD is met or you are blocked after trying; progress notes in logs/grok/gs-throughput-notes.md as you go. A final answer that only reads or plans counts as a failure.
 DOD: fight fps and drains/s before/after per step in notes + checks[]; bit-identical evidence (tests + screenshots); final JSON (files_changed, checks with numbers, contra[], open[]).
+
+TOOLS: build with `cmd /c tools\grok_build.cmd gs-throughput` and run with `powershell -File tools\grok_run.ps1 -Task gs-throughput -RunDir logs\grok\gs-throughput-<n> -Keys ... -Shots ... -Env NAME=VALUE`. One simple command per tool call: never chain with `;`/`&&` or set $env: inline (headless permission checks refuse that). Your progress so far is in logs/grok/gs-throughput-notes.md: continue from it and from the current state of your OWNS files.
+
+Check frame_NNs.bmp, not shot_NNs.png.

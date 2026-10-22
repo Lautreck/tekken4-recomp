@@ -1,19 +1,24 @@
-param([int[]]$DumpAt = @(66, 72, 78, 84), [string]$OutDir = "")
-# PCSX2 ground truth for the fight camera (compare with our TEKKEN4_CAMERA_LOG, runtime/tekken4_camera_overrides.cpp):
-# runs to the first fight (PAL60, Yes, Start, Medium, Arcade, Kazuya; the fight starts ~59 s) and, at the given seconds,
-# reads the camera pointer words 0x2AA0D0 / 0x2AA0D4 through PINE, then dumps cam = p + 0xF08 (0x200 bytes) for each
-# and the matrix slots at 0x01CE2270 (64 slots of 0xC0). Output: logs\pcsx2_camera_probe (or -OutDir).
+param([string[]]$DumpAt = @("62","68","74","80"), [string]$OutDir = "")
+# PCSX2 ground truth for the fight camera. Same fields as [camlive] (runtime/tekken4_camera_overrides.cpp).
+# Fight starts ~59 s with the keys below (PAL60). Shots at each dump second show the HUD clock (00:0x:xx).
+# Heap addresses differ from the recomp, so this walks pointers instead of hardcoding 0x947b30:
+#   p = u32[0x2AA0D0|0x2AA0D4], cam = u32[p+0xF08], dir = u32[cam+0x198] (0x90 bytes), target = p+0x660 (16 bytes),
+#   slot = 0x01CE2270 + u32[cam+0x174]*0xC0 (the 4x4 FUN_00244fc8 copies into the VU1 packet at 0x2454c4),
+#   basis vec4s at 0x2D27D0 (look-at inputs; FUN_00193800 writes only the Y of each).
+# a2 of the eye call is u32[cam+0x180] (logged as w180). Look-at a2/a3 are stale GPRs, not read by FUN_00193800.
+$DumpAt = @($DumpAt | ForEach-Object { $_ -split ',' } | Where-Object { $_ } | ForEach-Object { [int]$_ })
 $root = Split-Path -Parent $PSScriptRoot
 if (-not $OutDir) { $OutDir = Join-Path $root "logs\pcsx2_camera_probe" }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
-$shots = @($DumpAt | ForEach-Object { $_ }) -join ","
+# Last dump races pcsx2_capture tearing the process down. Hold one extra shot past it.
+$shots = (($DumpAt + @($DumpAt[-1] + 8)) -join ",")
 $job = Start-Job -ScriptBlock {
     param($root, $out, $shots)
     & (Join-Path $root "tools\pcsx2_capture.ps1") -OutDir $out -Shots $shots `
         -Keys "12:Down","14:Cross","16:Left","17:Cross","30:Start","36:Cross","40:Down","41.5:Cross","50:Cross"
 } -ArgumentList $root, $OutDir, $shots
-$pine = Join-Path $root "tools\pine.py"
-# pcsx2_capture may first wait for the run lock (Claude's or Grok's game runs): time the dumps from PCSX2's own start.
+$snap = Join-Path $root "logs\grok\camera_live_snap.py"
+# pcsx2_capture may first wait for logs\run.lock: time the dumps from this PCSX2's own start.
 $launched = Get-Date
 $t0 = $null
 while (-not $t0) {
@@ -22,23 +27,24 @@ while (-not $t0) {
     if ($p) { $t0 = $p.StartTime } else { Start-Sleep -Milliseconds 250 }
     if (((Get-Date) - $launched).TotalMinutes -gt 35) { throw "PCSX2 did not start" }
 }
-foreach ($at in $DumpAt) {
-    while (((Get-Date) - $t0).TotalSeconds -lt $at) { Start-Sleep -Milliseconds 250 }
-    $words = python -I $pine read32 0x2AA0D0 0x2AA0D4 2>&1
-    $words | Out-File -Encoding utf8 (Join-Path $OutDir "camera_$at.txt")
-    foreach ($line in $words) {
-        if ($line -match '^0x([0-9a-fA-F]+):\s*0x([0-9a-fA-F]+)') {
-            $p = [Convert]::ToUInt32($Matches[2], 16)
-            if ($p -ne 0 -and $p -lt 0x2000000) {
-                $cam = "0x{0:x}" -f ($p + 0xF08)
-                python -I $pine dump $cam 0x200 --out (Join-Path $OutDir ("cam_{0}_{1}.bin" -f $Matches[1], $at)) 2>&1 |
-                    Out-File -Encoding utf8 -Append (Join-Path $OutDir "camera_$at.txt")
-            }
+$probeLog = Join-Path $OutDir "probe.log"
+"pcsx2 started $($t0.ToString('HH:mm:ss')) dumps $($DumpAt -join ',')" | Set-Content -Encoding utf8 $probeLog
+Push-Location $root
+try {
+    foreach ($at in $DumpAt) {
+        while (((Get-Date) - $t0).TotalSeconds -lt $at) { Start-Sleep -Milliseconds 200 }
+        $out = Join-Path $OutDir ("snap_{0}.txt" -f $at)
+        $ok = $false
+        for ($try = 1; $try -le 8 -and -not $ok; $try++) {
+            & python -I $snap $out "pcsx2-t$at" 2>&1 | Out-File -Encoding utf8 -Append $probeLog
+            if ($LASTEXITCODE -eq 0 -and (Test-Path $out) -and ((Get-Item $out).Length -gt 64)) { $ok = $true }
+            else { Start-Sleep -Milliseconds 500 }
         }
+        if (-not $ok) { "PINE snap failed at $at s" | Out-File -Encoding utf8 -Append $probeLog }
+        else { "snap $at ok at {0:N1} s" -f ((Get-Date) - $t0).TotalSeconds | Out-File -Encoding utf8 -Append $probeLog }
     }
-    python -I $pine dump 0x01CE2270 0x3000 --out (Join-Path $OutDir "slots_$at.bin") 2>&1 |
-        Out-File -Encoding utf8 -Append (Join-Path $OutDir "camera_$at.txt")
 }
+finally { Pop-Location }
 Wait-Job $job | Out-Null
 Receive-Job $job
 Remove-Job $job

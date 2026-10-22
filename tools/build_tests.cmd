@@ -6,7 +6,7 @@ for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\
 if not defined VSDIR (echo MSVC not found & exit /b 1)
 call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" >nul || exit /b 1
 set "PATH=%ProgramFiles%\CMake\bin;%LOCALAPPDATA%\Microsoft\WinGet\Links;%PATH%"
-set "SRC=%~dp0..\external\PS2Recomp"
+if defined TEKKEN4_SRC (set "SRC=%TEKKEN4_SRC%") else set "SRC=%~dp0..\external\PS2Recomp"
 cmake -S "%SRC%" -B "%SRC%\out\test" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=/Z7 /O2 /Ob1 /DNDEBUG" "-DCMAKE_C_FLAGS_RELWITHDEBINFO=/Z7 /O2 /Ob1 /DNDEBUG" -DPS2X_BUILD_STUDIO=OFF ^
   -DPS2X_ENABLE_AGRESSIVE_LOGS=OFF -DPS2X_ENABLE_RUNTIME_LOGS=OFF -DPS2X_ENABLE_IOP_RPC_TRACE=OFF || exit /b 1
 cmake --build "%SRC%\out\test" --target ps2x_tests || exit /b 1

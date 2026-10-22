@@ -88,13 +88,83 @@ powershell -File tools\grok_run.ps1 -Task sound-run -RunDir logs\grok\sound-run-
 
 One -Env, comma-separated. Check frame_NNs.bmp. python -I logs/grok/wav_rms.py <wav>
 
+## 2026-10-22 clip / heap
+
+- ps2_sif_dma_tests.cpp:203 wants the first sceSifAllocIopHeap in [0x120000, 0x200000). HeapBase stays 0x80000 (the 0xE9400 block does not fit in 0x120000..0x1F0000). allocate() now bumps down from HeapLimit, so that 0x880/align-64 alloc is 0x1EF780. build_tests: Total 477 Passed 477 Failed 0, including "IOP heap DMA uses private backing instead of aliasing EE RDRAM".
+- Mixer: dry sum is clamped to s16 before the master multiply, and the multiply is int64. The old `(sum * volumeOf) >> 14` in int32 wraps when sum > ~131075 (4 full-scale voices * 0x3FFF), and the wrap is the negative rail. PCSX2 Mixer.cpp clamp_mixes before ApplyVolume(MasterVol).
+- sound-run-11 per-channel rails (wav_clips.py), not the mono-average peak: movie windows 8+44+19+436+670 = 1177. movie_peak.py on the ISO, same ADPCM as the runtime, also 1177 rails across 299 units. Those rails are the decoder saturating the source, which PCSX2's XA_decode_block does too. SPU-only rails: 42 in 55-60 s, 0 elsewhere. 0-5 s is 0 samples, and the mixer is what the WAV records (no zero pad). Sound init is before frame 1; the bed starts at 5 s, still on the display menu (frame 100 at 1.63 s, keys at 10 s).
+
+## 2026-10-22 later (runs 12-14, mix measured)
+
+Route unchanged: hybrid. TEKKEN4_SOUND=1 forwards sound RPCs to zsiopdrv; disc-read mode 0 and movie 0x3000/0x3100/0x3200 stay on the local HLE. Movie PCM is added after the SPU clamp (ps2_audio.cpp onMixedAudio).
+
+Heap: allocate() bumps down from HeapLimit 0x1F0000. First sceSifAllocIopHeap(0x880, align 64) is alignDown(0x1F0000-0x880, 64) = 0x1EF780, which is inside the DMA test's [0x120000, 0x200000). HeapBase stays 0x80000 so AllocSysMemory(0xE9400) still fits. This heap direction is not behind TEKKEN4_SOUND. cmd /c tools\build_tests.cmd: Total Tests 478, Passed 478, Failed 0. "IOP heap DMA uses private backing instead of aliasing EE RDRAM" Passed. The test file was not edited. vswhere.exe warning is pre-existing and the run still exited 0.
+
+Mix vs PCSX2: dry sum is clamped to s16 before the master multiply, multiply is int64 (sound_engine.cpp step). MVOL in sound-run-12 stderr is 0x3fff then 0x3f00 on both cores. volumeOf(0x3f00)=16128, and 32767*16128/16384 = 32256. After the fix, non-movie windows peak at 32256 with 0 rails. Before (sound-run-11, same keys) the 55-60 s window had 42 rails and mono peak 32768.
+
+Per-channel rails, python -I logs/grok/wav_clips.py (sample <= -32768 or >= 32767):
+
+sound-run-11 (73.000 s, 3504000 frames) before the clamp:
+- 0-5 peak 0 rails 0
+- 5-20 rails 0 (peaks 10751, 10924, 10924)
+- 20-25 rails 8; 25-30 rails 44; 30-35 rails 19; 35-40 rails 436; 40-45 rails 670
+- 45-55 rails 0; 55-60 rails 42 (peak 32768); 60-73 rails 0
+- movie windows 8+44+19+436+670 = 1177
+
+sound-run-12 (79.012 s, 3792553 frames) after the clamp, same keys, wall 95.2 s:
+- 0-5 rails 0; 5-20 rails 0
+- 20-25 rails 21; 25-30 rails 39; 30-35 rails 11; 35-40 rails 559; 40-45 rails 591 (sum 1221)
+- 45-79 rails 0. 55-60 peak 32256 rails 0 (was 42). 75-79 peak 29267 rails 0
+- RMS: 0-5 0; 5-10 0.020598/10751; 10-15 0.038847/10924; 15-20 0.032937/10924; 20-25 0.185903/28154; 25-30 0.213608/29461.5; 30-35 0.222394/29917.5; 35-40 0.220248/31506; 40-45 0.217270/32767; 45-50 0.022288/10460; 50-55 0.032937/10924; 55-60 0.111552/32256; 60-65 0.176262/25761; 65-70 0.107248/24401.5; 70-75 0.083275/17537; 75-79 0.103649/27662.5
+
+Movie rails are the ADPCM decoder saturating, then the menu bed is added on top in onMixedAudio, so a WAV window can exceed the decoder's own rail count. Do not scale the movie down. sound-run-12 movie closed after 301 units (run 11 was 299).
+
+Frames, sound-run-12 (frame_NNs.bmp via bmp_to_png, not the shot PNGs): frame_40s intro (Heihachi), frame_55s MODE SELECT, frame_75s round start STAGE 1 timer 60 Kazuya vs Law. frame_95s.bmp was not written: the capture closes at the last shot and the frameshot clock starts at override-apply, so the last mark loses the race. stdout line 154 is the window close right after frame_75 in the log; the process still ran 95.2 s.
+
+sound-run-13 (same keys, shots through 110, wall 110.8 s, WAV 89.012 s): frame_40 intro, frame_55 MODE SELECT, frame_75 and frame_95 are CHOOSE YOUR FIGHTER (timer 20 then 08, Kazuya/Kazuya). The 0.5 s later key times landed on character select instead of the round. RMS 65-85 is 0 (digital silence on that screen), then 85-89 rms 0.173390 peak 32256 rails 0. Movie-window rails 17+43+11+504+637 = 1212.
+
+sound-run-14 (Cross at 62/68/74, no Down; wall 130.2 s, WAV 101.000 s, 4848000 frames): frame_55 MODE SELECT, frame_75 and frame_95 are the attract GAME OVER demo (PRESS P1 START, INSERT COIN), frame_115 is the credit crawl. Not a played round. RMS 55-65 is 0, then the demo is loud and unclipped: 65-70 0.106471/26180, 70-75 0.052955/16823, 75-80 0.072453/29850, 80-85 0.188236/32256, 85-90 0.207656/32256, 90-95 0.209351/32256, 95-100 0.238801/32256, 100-101 0.131083/26619. Rails 0 from 45 s on. Movie-window rails 21+39+11+525+650 = 1246.
+
+sound-run-15 (run-12 keys, shots 75,100,115,130,145, wall 145.1 s, WAV 100.012 s, 4800560 frames). Frames from frame_NNs.bmp: frame_75 round start STAGE 1 timer 60 Kazuya vs Law (00:00:00); frame_100 the round in progress (Law kicking, timer 56, clock 00:03:96); frame_115 Law on the ground (timer 49, clock 00:10:06); frame_130 still down (timer 43, clock 00:16:55). Timer moved, so this is a played round, not the attract demo. frame_145 was not written (last shot races the close). WAV ends at 100 s while the process ran to 145 s: samples follow the IOP clock (CyclesPerSample 768) and step() drops the output buffer past 2 s, so the 115 s and 130 s pictures are past the end of the file. Fight-window rails are 0. RMS:
+- 0-5 0; 5-10 0.020598/10751; 10-15 0.038844/10924; 15-20 0.032941/10924
+- 20-25 0.175495/27005.5; 25-30 0.212734/29461.5; 30-35 0.224194/29917.5; 35-40 0.216162/31506; 40-45 0.223931/32768
+- 45-50 0.046470/21964; 50-55 0.032937/10924
+- 55-60 0.100673/32256; 60-65 0.182278/29674; 65-70 0.107522/24401.5; 70-75 0.081888/17547
+- 75-80 0.099361/27547.5; 80-85 0.168134/32256; 85-90 0.200156/32256; 90-95 0.198956/32256; 95-100 0.186557/32255
+Movie-window rails 8+44+19+450+691 = 1212. 55-100 s rails 0 (sound-run-11 had 42 rails in 55-60). 32256 is 32767 * 0x3f00 / 16384, the post-clamp full-scale sample through MVOL 0x3f00.
+
+0-5 s: every TEKKEN4_SOUND WAV this session (runs 11, 12, 13, 14) is digital zero for exactly 5 s, then the same bed (rms 0.020598 peak 10751). The WAV writer stores mixer frames, not a pad (header is 44 bytes; wav_rms counts frames). sound-run-12 stdout: main loop frame 100 at 1.63078 s, so the EE is in the menu loop during the silent window. The repeated peak means this is not a dropped buffer. No PCSX2 WAV was recorded. docs/status.md:418 puts the PCSX2 logo at 18-22 s including BIOS, which this runtime does not run.
+
+Reverb: not changed. sound-run-12 stderr: mode 6 depth 10240/10240 vmixE 000000/000000 on both cores, and EVOL (id 0x0b/0x0c) is 0x2800 at that call. setEffectAttr turns the effect bit on, but the wet send is VMIXEL/VMIXER and both are 0 at the only effect calls. A later SetSwitch is not logged.
+
+How to run (fight, and give the last shot ~15 s of spare so frame_NNs.bmp at the previous mark is written):
+
+cmd /c tools\grok_build.cmd sound-run
+
+powershell -File tools\grok_run.ps1 -Task sound-run -RunDir logs\grok\sound-run-N -Keys "10:Down","12:Cross","15:Left","16.5:Cross","45:Start","52:Cross","58:Down","60:Cross","66:Cross" -Shots 40,55,75,95,110 -Env TEKKEN4_SOUND=1,TEKKEN4_SOUND_WAV=logs\grok\sound-run-N\out.wav
+
+One -Env, comma-separated. python -I logs/grok/wav_rms.py and python -I logs/grok/wav_clips.py. Judge frame_NNs.bmp. The literal keys 40:Down, 41.5:Cross, 46:Cross land during the movie (sound-run-10); Start at 45 is what reaches MODE SELECT.
+
+## Files changed
+
+- external/PS2Recomp/ps2xIOP/src/emulator/core/iop_memory.h — heap cursor starts at HeapLimit
+- external/PS2Recomp/ps2xIOP/src/emulator/core/iop_memory.cpp — top-down allocate, alignDown
+- external/PS2Recomp/ps2xIOP/src/emulator/core/sound_engine.cpp — clamp the dry sum before the int64 master multiply; capped [snd-mix] log
+- logs/grok/wav_clips.py, logs/grok/movie_peak.py — measurements, not linked
+- logs/grok/sound-run-notes.md
+
+The [snd-mix] fprintf is not behind TEKKEN4_SOUND. It stops after 32 new values. A run with the sound route prints those lines; a run without the route does not init libsd.
+
 ## Known bugs
 
-- 0-5 s is still digital silence (logo).
-- Movie PCM is hot (peaks 27000-31600, one later window hits 32768). Pitch and channel assignment are from the probe, not from a listen.
-- Reverb send VMIXE is 0 at the mode-6 call, so the space preset may not be in the WAV.
-- frame_95s.bmp was not written on the fight run. shot_95s.png shows the round.
-- sound-run-10 used the same binary with Start at 30. Left landed at 18.9 s, the movie was mode 1 (logo, file 0x1d), and it never closed. Not the fight.
+- 0-5 s is digital silence from the mixer (same bed starts at 5 s on every sound run). Not a WAV pad.
+- Movie PCM still hits the rails. movie_peak.py on the ISO: 2143232 samples, peak 32768, 1177 decoder rails. The mix callback adds that PCM after the SPU clamp, so WAV movie windows can count more rails than 1177. Not a 2x gain bug.
+- Reverb send VMIXE is 0 at the mode-6 call (depth 10240, EVOL 0x2800). Wet input is empty at that call.
+- The WAV is shorter than the wall clock (sound-run-15: 100.012 s of audio, 145.1 s wall). Samples follow the IOP clock and the mix buffer drops past 2 s. frame_115 and frame_130 of that run are past the end of the WAV.
+- sound-run-13 character select (timer counting 20 then 08) has 20 s of digital silence (WAV 65-85).
+- The capture closes at the last -Shots mark, and the frameshot clock starts later than process start, so the last frame_NNs.bmp is not written. Give the last shot about 15 s of spare.
+- sound-run-10 Start at 30 fell in the movie and did not skip. Start at 45 does.
+- Key timing changes the screen: the same keys reached a round (runs 12 and 15), character select (run 13), or the attract demo (run 14, extra Cross, no Down).
 
 ## Files changed (this step)
 

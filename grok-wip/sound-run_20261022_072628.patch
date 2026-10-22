@@ -1,0 +1,81 @@
+diff --git a/ps2xIOP/src/emulator/core/iop_memory.cpp b/ps2xIOP/src/emulator/core/iop_memory.cpp
+index 25e9b36..a76147b 100644
+--- a/ps2xIOP/src/emulator/core/iop_memory.cpp
++++ b/ps2xIOP/src/emulator/core/iop_memory.cpp
+@@ -17,6 +17,11 @@ namespace ps2x::iop::detail
+         {
+             return (value + alignment - 1u) & ~(alignment - 1u);
+         }
++
++        uint32_t alignDown(uint32_t value, uint32_t alignment)
++        {
++            return value & ~(alignment - 1u);
++        }
+     }
+ 
+     IopMemory::IopMemory()
+@@ -32,7 +37,7 @@ namespace ps2x::iop::detail
+         std::fill(m_scratch.begin(), m_scratch.end(), uint8_t{0});
+         m_hardware.clear();
+         m_allocations.clear();
+-        m_heapCursor = HeapBase;
++        m_heapCursor = HeapLimit;
+         m_interruptStatus = 0;
+         m_interruptMask = 0;
+         m_interruptControl = 1;
+@@ -299,28 +304,37 @@ namespace ps2x::iop::detail
+             return address;
+         }
+ 
+-        uint32_t candidate = alignUp(m_heapCursor, alignment);
++        // Top-down bump. [HeapBase, m_heapCursor) is free. A 0x880 SIF alloc ends at HeapLimit
++        // (address 0x1EF780, inside the DMA test's [0x120000, 0x200000)). AllocSysMemory(0xE9400)
++        // is placed under whatever was taken first and still stays at or above HeapBase.
++        uint32_t limit = m_heapCursor;
+         for (;;)
+         {
++            if (limit <= HeapBase || size > limit - HeapBase)
++                return 0u;
++            const uint32_t candidate = alignDown(limit - size, alignment);
++            if (candidate < HeapBase)
++                return 0u;
+             bool overlap = false;
+             for (const auto &block : m_allocations)
+             {
+                 if (candidate < block.address + block.size && block.address < candidate + size)
+                 {
+-                    candidate = alignUp(block.address + block.size, alignment);
++                    if (block.address >= limit)
++                        return 0u;
++                    limit = block.address;
+                     overlap = true;
+                     break;
+                 }
+             }
+             if (!overlap)
+-                break;
++            {
++                m_allocations.push_back({candidate, size});
++                markOwned(candidate, size);
++                m_heapCursor = candidate;
++                return candidate;
++            }
+         }
+-        if (candidate > HeapLimit || size > HeapLimit - candidate)
+-            return 0u;
+-        m_allocations.push_back({candidate, size});
+-        markOwned(candidate, size);
+-        m_heapCursor = std::max(m_heapCursor, candidate + size);
+-        return candidate;
+     }
+ 
+     bool IopMemory::freeAllocation(uint32_t address)
+@@ -339,7 +353,7 @@ namespace ps2x::iop::detail
+ 
+     uint32_t IopMemory::maxFreeMemory() const
+     {
+-        return m_heapCursor < HeapLimit ? HeapLimit - m_heapCursor : 0u;
++        return m_heapCursor > HeapBase ? m_heapCursor - HeapBase : 0u;
+     }
+ 
+     std::optional<IopMemory::Allocation> IopMemory::allocationContaining(uint32_t address) const

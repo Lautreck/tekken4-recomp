@@ -673,6 +673,14 @@ Progress (2026-10-21, commits a31b778, fda9e02):
 - Window captures were blank all night (monitor off, hidden Grok processes): use frame_NNs.bmp
   (runtime/tekken4_frameshot_overrides.cpp, set by run_capture.ps1) + `python -I tools/bmp_to_png.py <run dir>`.
 
+## 60 fps budget (session 4, 2026-10-22)
+- gs-throughput (logs/grok/gs-throughput-notes.md): at 24 fps a fight frame is ~41.7 ms = ~23 ms GS wait + ~18.5 ms of
+  other game-thread work. A 60 fps frame is 16.7 ms, so even a zero GS wait caps the fight at ~54 fps: both must go
+  (GS fully overlapped AND non-GS game-thread work < 16.7 ms).
+- Non-GS shares (stack profile logs/grok/stack-profiler-3): IOP kernel scheduling ~9% (beginNextReady 5.1, nextWakeCycle
+  2.4, runCycles + serviceDue 1.4) -> Grok iop-sched; texture upload writeImageTransfer<19> 7.4% (GS side, gs-throughput);
+  EE timers ~2%; VIF / VU1 / recompiled game code each ~1% or less.
+
 ## Grok in the pipeline (from 2026-10-21)
 The user added Grok (xAI Grok Build CLI 1.0.62, `C:\Users\pablo\.grok\bin\grok.exe`, signed in with the user's
 grok.com account, default model grok-4.7) as a parallel worker, second opinion and reviewer; it may see everything that

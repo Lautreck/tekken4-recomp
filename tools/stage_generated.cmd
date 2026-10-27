@@ -8,7 +8,8 @@ setlocal
 set "GEN=%~dp0..\generated"
 if defined TEKKEN4_SRC (set "RT=%TEKKEN4_SRC%\ps2xRuntime") else set "RT=%~dp0..\external\PS2Recomp\ps2xRuntime"
 if not exist "%GEN%\register_functions.cpp" (echo generated\ is empty: run ps2_recomp first & exit /b 1)
-robocopy "%GEN%" "%RT%\src\runner" *.cpp /MIR /XF *_overrides.cpp /NJH /NJS /NFL /NDL /NP
+rem /E copies only and never purges (no tool in this project deletes: user rule 2026-10-27); stale files stay until the user removes them.
+robocopy "%GEN%" "%RT%\src\runner" *.cpp /E /XF *_overrides.cpp /NJH /NJS /NFL /NDL /NP
 if errorlevel 8 (echo copying .cpp files failed & exit /b 1)
 robocopy "%~dp0..\runtime" "%RT%\src\runner" *_overrides.cpp /NJH /NJS /NFL /NDL /NP
 if errorlevel 8 (echo copying overrides failed & exit /b 1)

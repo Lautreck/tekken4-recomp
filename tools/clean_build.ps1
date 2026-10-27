@@ -12,7 +12,9 @@ $env:TEKKEN4_SRC = $src
 & cmd /c "`"$(Join-Path $root 'tools\stage_generated.cmd')`""
 if ($LASTEXITCODE) { "staging failed"; exit 1 }
 $runner = Join-Path $src "ps2xRuntime\src\runner"
-Get-ChildItem $runner -Filter *_overrides.cpp | Remove-Item
+$committed = @(git -C $root ls-tree --name-only HEAD runtime/ | Where-Object { $_ -like '*_overrides.cpp' } | ForEach-Object { Split-Path -Leaf $_ })
+$stale = @(Get-ChildItem $runner -Filter *_overrides.cpp | Where-Object { $committed -notcontains $_.Name })
+if ($stale.Count) { "stale overrides in $runner (not in HEAD): " + (($stale | ForEach-Object Name) -join ', ') + " - deleting is not allowed; ask the user to remove them"; exit 1 }
 foreach ($f in @(git -C $root ls-tree --name-only HEAD runtime/ | Where-Object { $_ -like '*_overrides.cpp' })) {
     $text = (git -C $root show "HEAD:$f") -join "`n"
     [System.IO.File]::WriteAllText((Join-Path $runner (Split-Path -Leaf $f)), $text + "`n", (New-Object System.Text.UTF8Encoding $false))

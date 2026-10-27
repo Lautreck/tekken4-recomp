@@ -43,5 +43,5 @@ function Exit-RunLock([string]$Root)
 {
     $lock = Join-Path $Root "logs\run.lock"
     $holder = Get-Content $lock -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($holder -and ($holder -split ' ')[0] -eq "$PID") { Remove-Item $lock -ErrorAction SilentlyContinue }
+    if ($holder -and ($holder -split ' ')[0] -eq "$PID") { "" | Set-Content -Encoding ascii $lock }  # released = emptied, never deleted (no deletes allowed)
 }

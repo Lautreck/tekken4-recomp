@@ -50,8 +50,10 @@ foreach ($c in "commit", "push", "reset", "checkout", "switch", "restore", "clea
 # No deletion at all (2026-10-22 09:55 the project folder was wiped during four parallel tasks): recursive/forced delete
 # commands are denied and nothing may delete (user 2026-10-27: only the user deletes, per step; tools\grok_clean.ps1 is disabled).
 foreach ($d in "Remove-Item", "ri", "rm", "rmdir", "rd", "del", "erase", "robocopy", "xcopy", "move", "mv", "Move-Item", "mi", "Clear-Content", "Set-Content", "Out-File", "format", "cmd /c rd", "cmd /c rmdir", "cmd /c del", "cmd /c rm", "powershell -Command Remove-Item", "powershell -NoProfile -Command Remove-Item", "pwsh -Command Remove-Item") { $deny += "Bash(${d}:*)" }
+$deny += @('Bash(cmd /c *\"*)', 'Bash(cmd.exe /c *\"*)')  # the 2026-10-22 quoting bug (docs/status.md INCIDENT)
 $deny += @("Bash(find:* -delete*)", "Bash(*Remove-Item*)", "Bash(*rmtree*)", "Bash(*rm -rf*)", "Bash(*rd /s*)", "Bash(*rmdir /s*)", "Bash(*[IO.Directory]::Delete*)", "Bash(*Directory.Delete*)")
 # Lessons from the 2026-10-22 morning review of the night's 23 runs (docs/ai/grok-retro.md).
+$rules += ' QUOTING: Windows PowerShell 5.1 does not treat backslash-quote as an escape: a cmd /c string with backslash-quote inside double quotes is split into extra arguments and runs on the wrong target (it once became rmdir of a drive root). Put cmd /c strings in SINGLE quotes, or use a .cmd/.ps1 file; never write backslash-quote inside a double-quoted argument.'
 $rules += " NO DELETE: never delete or move files or folders (rm, rmdir, rd, del, Remove-Item, robocopy, rmtree, any language); not even your own scratch (tools\grok_clean.ps1 is disabled): if something should go, name the exact path in open[] for the user, who is the only one allowed to delete."
 $rules += " FINAL: right before your final answer, also write the identical JSON to logs/grok/$Name-final.json " +
     "(the answer survives a hung exit). CHECKS: a check proves something only if it could have failed: before using a " +

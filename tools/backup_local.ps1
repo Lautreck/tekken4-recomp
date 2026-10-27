@@ -11,6 +11,7 @@ if (-not $Force -and (Test-Path $stamp) -and ((Get-Date) - (Get-Item $stamp).Las
 if (-not (Test-Path (Join-Path $root ".git"))) { "backup skipped: $root has no .git (project damaged?)"; exit 1 }
 $src = @(
     @{ From = "ghidra"; To = "ghidra"; Xd = @() },
+    @{ From = "game\vu1"; To = "game\vu1"; Xd = @() },  # captured VU1 micro memory: lost once, the fight dropped to 12 fps
     @{ From = "logs"; To = "logs"; Xd = @() },
     @{ From = "external\PS2Recomp"; To = "external\PS2Recomp"; Xd = @("out", "build", ".vs") }
 )

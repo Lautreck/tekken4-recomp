@@ -30,7 +30,7 @@ rem Native VU1 blocks from the micro memories captured in game\vu1\micro (GOW_VU
 rem "Native VU1 port"); none there, or TEKKEN4_VU1N=0, builds the interpreter only.
 set "VU1DIR="
 for %%D in ("%~dp0..\game\vu1\micro") do set "VU1DIR=%%~fD"
-if not exist "%VU1DIR%\*.bin" set "VU1DIR="
+if not exist "%VU1DIR%\*.bin" set "VU1DIR=" & echo WARNING: no game\vu1\micro bin file - building the VU1 INTERPRETER only: the fight runs about 12 fps instead of 27. Restore the captured micro memory, see docs/status.md Native VU1 port.
 if "%TEKKEN4_VU1N%"=="0" set "VU1DIR="
 if defined VU1DIR set "VU1DIR=%VU1DIR:\=/%"
 rem /Z7: debug info in each object, no shared mspdbsrv. With several builds at once (Grok tasks + Claude) /Zi

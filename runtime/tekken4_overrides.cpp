@@ -5,7 +5,9 @@
 #include "ps2_runtime.h"
 #include "ps2_stubs.h"
 #include "ps2_syscalls.h"
+#include "runtime/ps2_audio.h"
 #include "runtime/ps2_memory.h"
+#include "ps2x/iop/iop_host.h"
 #include "runtime/gs/gs_frontend.h"
 #include "Stubs/CD.h"
 #include "Stubs/MPEG.h"
@@ -35,6 +37,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 namespace tekken4
 {
@@ -42,11 +45,15 @@ namespace tekken4
     // binds one client (0x1cccbc0) and only makes synchronous calls: 4 words in at 0x1ccc700 (the per-frame
     // call 0x100 sends a 0x80-byte command queue at 0x1ccc7c0 instead), 8 words back at 0x1ccc780.
     // FUN_002230d0 retries the bind every vsync until client.server != 0, so without a server boot stops there.
-    // Until the real driver runs on ps2xIOP, every call is answered at once with a zeroed reply: no sound.
+    // TEKKEN4_SOUND=1 plus an ISO forwards this SID to zsiopdrv, except mode-0 disc reads and the movie
+    // calls (0x3000/0x3100/0x3200), which stay on the local HLE. Without that env every call is answered
+    // at once with a zeroed reply: no sound.
     constexpr uint32_t kSoundSid = 0x12345u;
     constexpr uint32_t kSceSifBindRpc = 0x00282808u;
     constexpr uint32_t kSceSifCallRpc = 0x002829d8u;
     constexpr uint32_t kSceSifCheckStatRpc = 0x00282bc8u;
+    constexpr uint32_t kSceSifSendCmd = 0x00281F40u;
+    constexpr uint32_t kSifCmdSetSreg = 0x80000001u; // ps2sdk SIF_CMD_SET_SREG, packet+16 index, packet+20 value
 
     // t_SifRpcClientData: 16-byte header, then command, buf, cbuf, end_function, end_param, server.
     constexpr uint32_t kClientBodyOffset = 0x10u;
@@ -68,6 +75,23 @@ namespace tekken4
     std::ifstream g_disc;            // the ISO, or else a loose DATA.BIN extracted next to the ELF
     uint64_t g_discBase = 0u;        // byte offset of DATA.BIN inside g_disc
     bool g_discTried = false;
+    bool g_realSound = false;        // TEKKEN4_SOUND=1 and an ISO: SID 0x12345 reaches zsiopdrv
+
+    // TEKKEN4_ISO, else the first .iso in the project root (the ELF lives in <root>/game/disc).
+    std::filesystem::path findIsoPath()
+    {
+        const PS2Runtime::IoPaths &paths = PS2Runtime::getIoPaths();
+        std::error_code ec;
+        if (const char *env = std::getenv("TEKKEN4_ISO"))
+        {
+            if (env[0] != '\0')
+                return env;
+        }
+        for (const auto &entry : std::filesystem::directory_iterator(paths.elfDirectory.parent_path().parent_path(), ec))
+            if (!ec && entry.path().extension() == ".iso")
+                return entry.path();
+        return {};
+    }
 
     // The ISO comes first: it holds the whole disc, so a sector past DATA.BIN (DATA2.BIN follows it) reads as on
     // a console. A loose TEKKEN/DATA.BIN is only a fallback for setups without the image.
@@ -76,18 +100,7 @@ namespace tekken4
         if (g_discTried)
             return g_disc.is_open();
         g_discTried = true;
-        const PS2Runtime::IoPaths &paths = PS2Runtime::getIoPaths();
-        std::filesystem::path source;
-        std::error_code ec;
-        if (const char *env = std::getenv("TEKKEN4_ISO"))
-            source = env;
-        else // the first .iso in the project root (the ELF lives in <root>/game/disc)
-            for (const auto &entry : std::filesystem::directory_iterator(paths.elfDirectory.parent_path().parent_path(), ec))
-                if (entry.path().extension() == ".iso")
-                {
-                    source = entry.path();
-                    break;
-                }
+        std::filesystem::path source = findIsoPath();
         if (!source.empty())
         {
             g_disc.open(source, std::ios::binary);
@@ -95,7 +108,8 @@ namespace tekken4
         }
         if (!g_disc.is_open())
         {
-            source = paths.cdRoot / "TEKKEN" / "DATA.BIN";
+            std::error_code ec;
+            source = PS2Runtime::getIoPaths().cdRoot / "TEKKEN" / "DATA.BIN";
             if (std::filesystem::exists(source, ec))
             {
                 g_disc.open(source, std::ios::binary);
@@ -157,6 +171,69 @@ namespace tekken4
     uint32_t g_movieSize = 0u;
     uint32_t g_movieVideoPos = 0u; // video bytes already delivered
     bool g_movieEnded = false;
+    // Predictor state for the two SPU ADPCM channels. The 4096-byte audio pair after each video unit is
+    // 16-byte left blocks interleaved with 16-byte right blocks (flag byte 0x02 on every block).
+    int32_t g_movieHist[2][2] = {};
+    uint32_t g_movieAudioUnits = 0u;
+
+    void decodeMovieAdpcm(const uint8_t *block, int32_t &hist1, int32_t &hist2, int16_t *out)
+    {
+        static constexpr int32_t kFilters[5][2] = {{0, 0}, {60, 0}, {115, -52}, {98, -55}, {122, -60}};
+        uint32_t shift = block[0] & 0xFu;
+        if (shift > 12u)
+            shift = 9u;
+        const uint32_t filter = std::min<uint32_t>((block[0] >> 4u) & 7u, 4u);
+        const int32_t f0 = kFilters[filter][0];
+        const int32_t f1 = kFilters[filter][1];
+        uint32_t n = 0u;
+        for (uint32_t word = 1; word < 8u; ++word)
+        {
+            const uint16_t packed = static_cast<uint16_t>(block[word * 2u] | (block[word * 2u + 1u] << 8u));
+            for (uint32_t nibble = 0; nibble < 4u; ++nibble)
+            {
+                const int32_t raw = static_cast<int16_t>(((packed >> (nibble * 4u)) & 0xFu) << 12u) >> shift;
+                const int32_t predicted = (hist1 * f0 + hist2 * f1 + 32) >> 6;
+                const int32_t sample = std::clamp(raw + predicted, -32768, 32767);
+                hist2 = hist1;
+                hist1 = sample;
+                out[n++] = static_cast<int16_t>(sample);
+            }
+        }
+    }
+
+    // One interleave unit is 74.7 ms of 48 kHz stereo (128 block pairs x 28 samples). Queued onto the mixer
+    // clock, so a read-ahead ring plays out in guest time instead of as a burst.
+    void queueMovieAudio(uint32_t unit)
+    {
+        if (!g_realSound || !openDisc())
+            return;
+        const uint64_t fileOffset = static_cast<uint64_t>(unit) * (kMovieVideoBytes + kMovieAudioBytes) + kMovieVideoBytes;
+        if (fileOffset + kMovieAudioBytes > g_movieSize)
+            return;
+        uint8_t raw[kMovieAudioBytes];
+        g_disc.clear();
+        g_disc.seekg(static_cast<std::streamoff>(g_discBase + static_cast<uint64_t>(g_movieSector) * 2048u + fileOffset));
+        g_disc.read(reinterpret_cast<char *>(raw), kMovieAudioBytes);
+        if (g_disc.gcount() != static_cast<std::streamsize>(kMovieAudioBytes))
+            return;
+        constexpr uint32_t kBlocks = kMovieAudioBytes / 32u;
+        constexpr uint32_t kFrames = kBlocks * 28u;
+        std::vector<int16_t> pcm(kFrames * 2u);
+        for (uint32_t block = 0; block < kBlocks; ++block)
+        {
+            int16_t left[28], right[28];
+            decodeMovieAdpcm(raw + block * 32u, g_movieHist[0][0], g_movieHist[0][1], left);
+            decodeMovieAdpcm(raw + block * 32u + 16u, g_movieHist[1][0], g_movieHist[1][1], right);
+            for (uint32_t i = 0; i < 28u; ++i)
+            {
+                pcm[(block * 28u + i) * 2u] = left[i];
+                pcm[(block * 28u + i) * 2u + 1u] = right[i];
+            }
+        }
+        ps2PushMoviePcm(pcm.data(), kFrames);
+        if (g_movieAudioUnits++ == 0u)
+            RUNTIME_LOG("[tekken4] movie audio: unit " << unit << " -> " << kFrames << " stereo frames\n");
+    }
 
     void movieOpen(uint8_t *rdram, uint32_t sendAddr)
     {
@@ -167,6 +244,9 @@ namespace tekken4
         g_movieSize = args[1];
         g_movieVideoPos = 0u;
         g_movieEnded = false;
+        g_movieHist[0][0] = g_movieHist[0][1] = g_movieHist[1][0] = g_movieHist[1][1] = 0;
+        g_movieAudioUnits = 0u;
+        ps2ClearMoviePcm();
         RUNTIME_LOG("[tekken4] movie open: file 0x" << std::hex << args[2] << " sector " << std::dec << args[0]
                                                    << " size " << args[1] << " mode " << args[3]
                                                    << (args[3] != 0u ? " (mode 1 layout unverified)" : "") << "\n");
@@ -187,6 +267,8 @@ namespace tekken4
             // Video offset -> file offset: skip the audio sectors of every unit before it.
             const uint32_t unit = g_movieVideoPos / kMovieVideoBytes;
             const uint32_t inUnit = g_movieVideoPos % kMovieVideoBytes;
+            if (inUnit == 0u)
+                queueMovieAudio(unit);
             const uint64_t fileOffset = static_cast<uint64_t>(unit) * (kMovieVideoBytes + kMovieAudioBytes) + inUnit;
             if (fileOffset >= g_movieSize)
             {
@@ -474,23 +556,55 @@ namespace tekken4
         }
 
         const uint32_t client = getRegU32(ctx, 4);
-        uint8_t *cd = getMemPtr(rdram, client);
-        if (!cd)
+        if (!g_realSound)
         {
-            setReturnS32(ctx, -1);
+            uint8_t *cd = getMemPtr(rdram, client);
+            if (!cd)
+            {
+                setReturnS32(ctx, -1);
+                return;
+            }
+            // Any non-zero server ends the retry loop. Nothing dereferences it: calls on this client stop here.
+            std::memset(cd + kClientBodyOffset, 0, kClientBodySize);
+            std::memcpy(cd + kClientServerOffset, &client, sizeof(client));
+
+            std::lock_guard<std::mutex> lock(g_mutex);
+            if (g_soundClients.insert(client).second)
+            {
+                RUNTIME_LOG("[tekken4] sound RPC 0x12345 bound to silent HLE server, client 0x" << std::hex << client
+                                                                                                << std::dec << "\n");
+            }
+            setReturnS32(ctx, 0);
             return;
         }
-        // Any non-zero server ends the retry loop. Nothing dereferences it: calls on this client stop here.
-        std::memset(cd + kClientBodyOffset, 0, kClientBodySize);
-        std::memcpy(cd + kClientServerOffset, &client, sizeof(client));
 
+        // Real bind records the client under SID 0x12345 even when the IRX has not called
+        // sceSifRegisterRpc yet. This ELF spins at 0x2230f0 until client.server != 0, and the module
+        // load that would register the SID is not reached while that spin runs. A zeroed placeholder
+        // (not the client itself: SifCallRpc writes through server) lets boot continue. Calls still
+        // dispatch on the SID, so they hit zsiopdrv once its entry has registered.
+        ps2_stubs::sceSifBindRpc(rdram, ctx, runtime);
+        uint32_t server = 0u;
+        uint8_t *cd = getMemPtr(rdram, client);
+        if (cd)
+            std::memcpy(&server, cd + kClientServerOffset, sizeof(server));
+        const bool registered = server != 0u;
+        if (!registered && cd && runtime)
+        {
+            const uint32_t placeholder = runtime->guestCalloc(1u, 64u, 16u);
+            if (placeholder != 0u)
+            {
+                std::memcpy(cd + kClientServerOffset, &placeholder, sizeof(placeholder));
+                server = placeholder;
+            }
+        }
         std::lock_guard<std::mutex> lock(g_mutex);
         if (g_soundClients.insert(client).second)
-        {
-            RUNTIME_LOG("[tekken4] sound RPC 0x12345 bound to silent HLE server, client 0x" << std::hex << client
-                                                                                            << std::dec << "\n");
-        }
-        setReturnS32(ctx, 0);
+            RUNTIME_LOG("[tekken4] sound RPC 0x12345 bound, client 0x" << std::hex << client << " server 0x" << server
+                                                                        << (registered ? " (zsiopdrv)" : " (placeholder, zsiopdrv not registered yet)")
+                                                                        << std::dec << "\n");
+        if (!registered && server == 0u)
+            setReturnS32(ctx, -1);
     }
 
     void sifCallRpc(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
@@ -518,6 +632,100 @@ namespace tekken4
         const uint32_t reply = getRegU32(ctx, 9);
         const uint32_t replySize = getRegU32(ctx, 10);
         const uint32_t endFunction = getRegU32(ctx, 11);
+        // Mode 0 of 0x200 writes EE RAM the loader checksums; that copy stays here. Other modes are sound
+        // banks the local HLE used to drop, so zsiopdrv has to receive them or the mixer stays silent.
+        bool forward = false;
+        uint32_t discMode = 0u;
+        if (g_realSound)
+        {
+            if (function == kDiscReadCall)
+            {
+                if (const uint8_t *send = getMemPtr(rdram, getRegU32(ctx, 7)))
+                    std::memcpy(&discMode, send + 12, 4);
+                forward = discMode != 0u;
+            }
+            else if (function != kMovieOpenCall && function != kMovieReadCall && function != kMovieCloseCall)
+                forward = true;
+        }
+        if (forward)
+        {
+            {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                if (g_loggedCalls.insert(function).second)
+                    RUNTIME_LOG("[tekken4] sound RPC call 0x" << std::hex << function
+                                                               << " forwarded to zsiopdrv, reply 0x" << reply
+                                                               << " size 0x" << replySize << std::dec << "\n");
+            }
+            if (function == kDiscReadCall)
+            {
+                static int forwardedReads = 0;
+                if (forwardedReads < 8)
+                {
+                    ++forwardedReads;
+                    uint32_t sector = 0u, size = 0u;
+                    if (const uint8_t *send = getMemPtr(rdram, getRegU32(ctx, 7)))
+                    {
+                        std::memcpy(&sector, send, 4);
+                        std::memcpy(&size, send + 8, 4);
+                    }
+                    RUNTIME_LOG("[tekken4] disc read mode " << discMode << " forwarded, sector " << sector
+                                                            << " size " << size << "\n");
+                }
+            }
+            ps2_syscalls::sceSifCallRpc(rdram, ctx, runtime);
+            if (function == kDiscReadCall)
+            {
+                uint32_t done = 0u;
+                std::memcpy(&done, rdram + kDiscReadDoneFlag, 4);
+                ++done;
+                std::memcpy(rdram + kDiscReadDoneFlag, &done, 4);
+            }
+            if (function == kSoundFrameCall && g_movieSize != 0u && replySize >= 16u)
+            {
+                if (uint8_t *dst = getMemPtr(rdram, reply))
+                {
+                    uint32_t status = 0u;
+                    std::memcpy(&status, dst + kFrameReplyStatusWord * 4u, 4);
+                    status |= kStatusMovieAudioReady | (g_movieEnded ? kStatusMovieEnded : 0u);
+                    std::memcpy(dst + kFrameReplyStatusWord * 4u, &status, 4);
+                }
+            }
+            std::lock_guard<std::mutex> lock(g_mutex);
+#ifdef _WIN32
+            if (function == kSoundFrameCall)
+                captureGameThread();
+#endif
+            if (function == kSoundFrameCall && ++g_frames == g_nextFrameLog)
+            {
+                const auto now = std::chrono::steady_clock::now();
+                if (g_frames == 1u)
+                    g_firstFrame = now;
+                const double seconds = std::chrono::duration<double>(now - g_firstFrame).count();
+                if (g_frames == 1u)
+                    RUNTIME_LOG("[tekken4] main loop frame 1\n");
+                else
+                    RUNTIME_LOG("[tekken4] main loop frame " << g_frames << " after " << seconds << " s ("
+                                                             << (g_frames - 1u) / seconds << " fps)\n");
+                g_nextFrameLog *= 10u;
+            }
+            if (function == kSoundFrameCall && g_gsDumpFrame != 0u && g_frames + 2u == g_gsDumpFrame)
+            {
+                runtime->gs().clearDebugHistory();
+                runtime->gs().setDebugHistoryPaused(false);
+                std::lock_guard<std::mutex> gifLock(g_gifLogMutex);
+                g_gifLog.open("gif_packets_frame" + std::to_string(g_gsDumpFrame) + ".txt");
+            }
+            if (function == kSoundFrameCall && g_frames == g_gsDumpFrame)
+            {
+                runtime->gs().setDebugHistoryPaused(true);
+                {
+                    std::lock_guard<std::mutex> gifLock(g_gifLogMutex);
+                    g_gifLog.close();
+                }
+                dumpGs(*runtime, g_frames);
+            }
+            return;
+        }
         if (uint8_t *dst = replySize ? getMemPtr(rdram, reply) : nullptr)
         {
             std::memset(dst, 0, replySize < kMaxReplySize ? replySize : kMaxReplySize);
@@ -529,7 +737,13 @@ namespace tekken4
         else if (function == kMovieReadCall)
             movieRead(rdram, getRegU32(ctx, 7));
         else if (function == kMovieCloseCall)
+        {
+            if (g_movieAudioUnits != 0u)
+                RUNTIME_LOG("[tekken4] movie audio closed after " << g_movieAudioUnits << " units\n");
             g_movieSize = 0u;
+            g_movieAudioUnits = 0u;
+            ps2ClearMoviePcm();
+        }
         else if (function == kSoundFrameCall && g_movieSize != 0u && replySize >= 16u)
         {
             const uint32_t status = kStatusMovieAudioReady | (g_movieEnded ? kStatusMovieEnded : 0u);
@@ -589,12 +803,45 @@ namespace tekken4
     void sifCheckStatRpc(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         ctx->pc = getRegU32(ctx, 31);
-        if (!isSoundClient(getRegU32(ctx, 4)))
+        // The real driver can still be inside SifCallRpc. The silent HLE finishes every call before it returns.
+        if (g_realSound || !isSoundClient(getRegU32(ctx, 4)))
         {
             ps2_stubs::sceSifCheckStatRpc(rdram, ctx, runtime);
             return;
         }
         setReturnS32(ctx, 0); // never busy: every call completes inside sifCallRpc
+    }
+
+    // The recompiled sceSifSendCmd ends in ps2_syscalls::sceSifSendCmd, which copies an extra payload and
+    // returns 1. It does not store SIF_CMD_SET_SREG. zsiopdrv's init (handler 0x4c6b4) spins on
+    // sceSifGetSreg(31) until that store is non-zero. The game writes index 31 = 1 at 0x229608, before the bind.
+    void sifSendCmd(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        ctx->pc = getRegU32(ctx, 31);
+        const uint32_t cid = getRegU32(ctx, 4);
+        const uint32_t packet = getRegU32(ctx, 5);
+        uint32_t index = 0u;
+        uint32_t value = 0u;
+        bool have = false;
+        if (cid == kSifCmdSetSreg && packet != 0u)
+        {
+            if (const uint8_t *bytes = getMemPtr(rdram, packet))
+            {
+                std::memcpy(&index, bytes + 16, 4);
+                std::memcpy(&value, bytes + 20, 4);
+                have = index < 32u;
+            }
+        }
+        ps2_syscalls::sceSifSendCmd(rdram, ctx, runtime);
+        if (!have)
+            return;
+        ps2x::iop::setSifSoftwareRegister(index, value);
+        static int logged = 0;
+        if (logged < 8)
+        {
+            ++logged;
+            RUNTIME_LOG("[tekken4] SIF_CMD_SET_SREG index=" << index << " value=" << value << "\n");
+        }
     }
 
     // Debug aid (TEKKEN4_IRQ_LOG=<count>): log the MFIFO ring state around the game's DMA-end handlers and its
@@ -914,6 +1161,33 @@ namespace tekken4
 
     void apply(PS2Runtime &runtime)
     {
+        if (const char *sound = std::getenv("TEKKEN4_SOUND"); sound && std::strcmp(sound, "1") == 0)
+        {
+            const std::filesystem::path iso = findIsoPath();
+            if (!iso.empty())
+            {
+                PS2Runtime::IoPaths paths = PS2Runtime::getIoPaths();
+                paths.cdImage = iso;
+                PS2Runtime::setIoPaths(paths);
+                g_realSound = true;
+                RUNTIME_LOG("[tekken4] TEKKEN4_SOUND=1: SID 0x12345 goes to zsiopdrv, cdImage " << iso.string()
+                                                                                                << "\n");
+            }
+            else
+                RUNTIME_LOG("[tekken4] TEKKEN4_SOUND=1 but no ISO; silent HLE stays\n");
+        }
+        if (const char *wav = std::getenv("TEKKEN4_SOUND_WAV"); wav && wav[0] != '\0')
+        {
+            std::filesystem::path wavPath(wav);
+            if (wavPath.is_relative())
+                wavPath = PS2Runtime::getIoPaths().elfDirectory.parent_path().parent_path() / wavPath;
+            const std::string absolute = wavPath.lexically_normal().string();
+#ifdef _WIN32
+            _putenv_s("TEKKEN4_SOUND_WAV", absolute.c_str());
+#else
+            setenv("TEKKEN4_SOUND_WAV", absolute.c_str(), 1);
+#endif
+        }
         runtime.registerFunction(0x00292900u, closeDmaTag);
         // The VIF1 packet builder's close (same code, other copy): FUN_002344e0's texture-flush CNT came out qwc 4
         // instead of 2, VIF1 then read the next REF tags as data and the fight stalled ~4 s in (found by Grok, task
@@ -1048,6 +1322,8 @@ namespace tekken4
         runtime.registerFunction(kSceSifBindRpc, sifBindRpc);
         runtime.registerFunction(kSceSifCallRpc, sifCallRpc);
         runtime.registerFunction(kSceSifCheckStatRpc, sifCheckStatRpc);
+        if (g_realSound)
+            runtime.registerFunction(kSceSifSendCmd, sifSendCmd);
     }
 }
 

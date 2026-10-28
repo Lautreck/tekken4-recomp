@@ -38,3 +38,5 @@ Static recompilation of Tekken 4 (PS2) to a native Windows executable using PS2R
 - Push after every commit (private remote Lautreck/tekken4-recomp): git is the only copy of tools/docs/config/patches/runtime. 
   NOBODY deletes (Claude, subagents, Grok): user rule 2026-10-27, only the user removes files, each step authorised by them. Deny rules in tools/grok_task.ps1 and ~/.claude/settings.json.
   tools/backup_local.ps1 copies ghidra/, logs/, external/PS2Recomp to ~/tekken4-backup (run by grok_start.ps1).
+
+- Clearing away (user, 2026-10-28): only `powershell -File tools\to_clean.ps1 -Path <item>` = MOVE into `to clean\` (gitignored, logged in logs\to_clean.log), never delete; the user inspects it.

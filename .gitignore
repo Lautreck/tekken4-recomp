@@ -28,3 +28,4 @@ __pycache__/
 # Local shortcuts and scratch folders
 *.lnk
 help/
+to clean/

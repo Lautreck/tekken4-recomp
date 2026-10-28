@@ -4,22 +4,28 @@ A static recompilation of **Tekken 4** (PlayStation 2) into a native Windows pro
 [PS2Recomp](https://github.com/ran-j/PS2Recomp). The game's MIPS code is translated to C++ ahead of time and
 linked against PS2Recomp's runtime, which stands in for the PS2 hardware.
 
-Target: **PAL (Europe/Australia), v2.00, SCES-50878**. Addresses in this repo only match that build.
+Target: **NTSC-U (USA), v1.00, SLUS-20328** on branch `us-slus20328` (PAL SCES-50878 v2.00 on `master`). Addresses only match that build.
 
 > This repo holds **no game data**: no ELF, no disc files, no BIOS, no generated C++ from the game.
 > You need your own copy of the game and a BIOS dumped from your own console.
 
 ## Status
 
+US build (SLUS-20328), 2026-10-29:
+
 | Milestone | State |
 |---|---|
-| 0-2. Scaffold, toolchain, PS2Recomp tools | done |
-| 3. Function map from Ghidra, recompiles (4809 functions, 0 errors) and links | done |
-| 4. Boots past startup without crashing | **done**: main loop runs at ~47 fps |
-| 5. Something on screen | in progress: the first screen's geometry draws, textures and text don't yet |
-| 6-8. Menus and input, a fight, sound/saves | not started |
+| Function map (headless Ghidra, 4454 + 359 functions), 40 jump tables, recompiles with 0 errors | done |
+| Boot, Namco logo, intro movie, difficulty, mode select, character select, Story prologue | done |
+| A fight (Story Battle, Kazuya vs Paul), native VU1, OpenGL renderer, full speed (60 fps) | done |
+| Sound (real Namco driver on the emulated IOP) | runs; host audio output to be confirmed by a player |
+| Other modes, long sessions | being tested |
+| One-step build from the player's own ISO (no BIOS) | in progress |
+| Rollback online (as T5DR Online) | planned, see docs/ROLLBACK_PLAN.md |
 
-What it took to reach the main loop:
+The PAL build (`master`) reached all of the above earlier; its log is in [docs/status.md](docs/status.md).
+
+What it took to reach the main loop (PAL, carried over):
 - **Functions Ghidra never found** (C++ static constructors and vtable methods, only reachable through
   pointer tables): `tools/find_missing_functions.py` adds 350 of them.
 - **The sound driver** (Namco's IOP module, SIF RPC 0x12345) is answered by a silent stand-in in
@@ -48,7 +54,7 @@ redo the function map.
 
 1. Clone PS2Recomp next to this folder as `../tekken4-fork-ps2recomp` (the default tree of every script; `TEKKEN4_SRC`
    points them at another one) at the commit pinned in `docs/status.md`.
-2. Copy the files from your disc into `game/disc/` (the ELF is `SCES_508.78`).
+2. Copy the files from your disc into `game/disc/` (the ELF is `SLUS_203.28`), and put the ISO itself in the repo root (sound and disc reads use it).
 3. `tools\build_ps2recomp_tools.cmd` builds the recompiler.
 4. `..\tekken4-fork-ps2recomp\out\tools\ps2xRecomp\ps2_recomp.exe config\ghidra_export.toml` writes `generated/`.
 5. `tools\stage_generated.cmd` copies the generated code and our overrides into the runtime.

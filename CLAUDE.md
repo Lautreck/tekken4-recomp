@@ -2,14 +2,20 @@
 
 Static recompilation of Tekken 4 (PS2) to a native Windows executable using PS2Recomp.
 
-## Target
-- Tekken 4, PAL (Europe/Australia), v2.00, serial SCES-50878
-- Main ELF: `game/disc/SCES_508.78` (SHA-1 `24ced2b7f3a0a40b3cacec56a030701d6be8e5ce`)
-- SYSTEM.CNF: `BOOT2 = cdrom0:\SCES_508.78;1`, `VMODE = PAL`
-- Disc data: `TEKKEN/DATA.BIN` (2.6 GB), `TEKKEN/DATA2.BIN` (1.7 GB), `IRX/IOPRP243.IMG`
-- ELF facts: stripped (no symtab), C++ (ee-gcc, has `.gcc_except_table`), entry `0x00180088`,
-  `.text` 0x00180080-0x002a91f8, 22 `.DVP.overlay` VU microcode sections, SDK libs 2.3x-2.4x
-  (kernel, dma, graph, mpeg, ipu, pkt, pad, mc, scf, cdvd). Run `python -I tools/elf_info.py` to re-check.
+## Target (branch us-slus20328, since 2026-10-29; `master` keeps the PAL build)
+- Tekken 4, NTSC-U (USA), v1.00, serial SLUS-20328 (US frame data; one DATA.BIN, no PAL60 menu)
+- Main ELF: `game/disc/SLUS_203.28` (SHA-1 `a4b7dde20a2918c550badd127a245db155c36815`, CRC32 `0xB975F704`)
+- SYSTEM.CNF: `BOOT2 = cdrom0:\SLUS_203.28;1`, `VMODE = NTSC`
+- Disc data: `TEKKEN/DATA.BIN` (2.7 GB, LBN 401), `IRX/IOPRP243.IMG`
+- ELF facts: stripped, C++ (ee-gcc), entry `0x00180088`, `.text` 0x00180080-0x002a85b8, gp `0x35cb70`,
+  22 `.DVP.overlay` VU microcode sections (same VU1 micro memory as PAL: `vu1_62802e7b8abf4848.bin`).
+- Ported from PAL without the PAL ELF: `tools/map_pal_to_us.py` (function lists aligned by size),
+  `tools/us_site.py` (US code at a PAL address), `tools/translate_jump_tables.py`, `tools/port_overrides_us.py`.
+  PAL -> US data deltas: .data -0xe40, .sdata/.sbss -0x2700, .bss -0x2780, .rodata per jump-table anchor.
+- Ghidra runs headless: `tools\ghidra_headless.cmd <elf> <analyzer_seed.toml> <out_dir>`, then
+  `python -I tools/postprocess_ghidra_export.py --starts <out_dir>\ghidra_starts.txt`. No GhidraMCP needed.
+- Goals (user): players need no BIOS, only their ISO; rollback online as good as T5DR Online
+  (TheWishin/T5DROnline-Source, `src/rollback`, `docs/ROLLBACK.md`); plan in `docs/ROLLBACK_PLAN.md`.
 
 ## Layout
 - `game/` - files extracted from the disc (gitignored, never commit)
@@ -35,7 +41,7 @@ Static recompilation of Tekken 4 (PS2) to a native Windows executable using PS2R
 - Per-game fixes go in game overrides (`PS2_REGISTER_GAME_OVERRIDE`), not the global runtime.
 - PCSX2 is ground truth: compare behaviour against PCSX2's debugger before "fixing" anything.
 - One goal per session (one crash, one syscall, one subsystem). Commit after each working step.
-- Addresses in this repo are for SCES-50878 v2.00 only; they do not carry over to NTSC-U/J builds.
+- Addresses on this branch are for SLUS-20328 v1.00 only (PAL SCES-50878 v2.00 lives on `master`); map with tools/map_pal_to_us.py.
 - Run Python on anything under `game/` with `python -I`.
 - Push after every commit (private remote Lautreck/tekken4-recomp): git is the only copy of tools/docs/config/patches/runtime. 
   NOBODY deletes (Claude, subagents, Grok): user rule 2026-10-27, only the user removes files, each step authorised by them. Deny rules in tools/grok_task.ps1 and ~/.claude/settings.json.

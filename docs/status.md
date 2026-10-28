@@ -1,8 +1,20 @@
 # Status
 
-_Last updated: 2026-10-28 22:25 (session 6, end)_
+_Last updated: 2026-10-29 (US port session)_
 
 ## Resume here
+- **US BUILD SLUS-20328 (2026-10-29, branch us-slus20328), RESTART HERE.** User switched to the US game (frame
+  data; simpler build). Ported without the PAL ELF: headless Ghidra (tools\ghidra_headless.cmd, 4454 functions; PAL had
+  4459), find_missing_functions adds 359; tools\map_pal_to_us.py aligns PAL/US function lists by size (4405 matched,
+  code delta 0 .. -0xc40); all 40 jump tables carried over (31 exact, 9 read from the US ELF); overrides rewritten by
+  tools\port_overrides_us.py (data deltas from US code via tools\us_site.py: .data -0xe40, .sdata/.sbss -0x2700 (gp
+  0x35cb70), .bss -0x2780); DATA.BIN LBN 401; CRC 0xB975F704. Camera log parked in runtime\pal\ (9 functions unmatched).
+  PS2Recomp tree D:\tekken4-fork-ps2recomp branch t4-us = eb8688b + patches 01-32 (core.autocrlf=false; 18-23 and 30
+  need --ignore-whitespace). Verified (logs\us_boot1, us_menu1, us_fight1, us_fight2): boot, intro movie, difficulty,
+  mode select, char select, Story prologue, fight Kazuya vs Paul at full speed with native VU1 (same micro hash as PAL).
+  US key path: 8:Start (skip movie), 13:Start (MEDIUM), 17:Start (STORY BATTLE), 21:Cross (Kazuya), 26:Start (skip
+  prologue) -> fight ~32 s. Open: host audio device failed to open in the night run ("Failed to initialize playback
+  device") although the driver streams; QA of all modes; build-from-ISO script; rollback (docs/ROLLBACK_PLAN.md).
 To continue, open Claude Code in this folder and say: "read docs/status.md and continue".
 - Done in session 1: toolchain installed, PS2Recomp tools built, analyzer seed + full recompile with 0 errors,
   Ghidra project (`ghidra/Tekken4`, non-shared) analysed with SDK names applied, Ghidra export recompiled.

@@ -53,7 +53,25 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Next goals, in order: (1) sound: clipping (movie PCM added after the SPU clamp) and the char-select silence
   (driver stops issuing libsd/cdvd calls after a 3.26 s one-shot); (2) fps toward 60 (GS ~700 ms/s, game thread
   ~13-18 ms/frame); (3) a CD-completion-callback case for the idle-skip test.
-- **GL STAGE FIXED (2026-10-28, session 6), RESTART HERE.** Patch 26 (fork gs-gl, `patches/26-ps2xRuntime-gs-gl-stage-textures.patch`):
+- **GL IS THE DEFAULT RENDERER (2026-10-28, session 6), RESTART HERE.** tools\run_game.cmd and tools\run_capture.ps1
+  now set PS2X_GS_BACKEND=gl unless it is already set (PS2X_GS_BACKEND=cpu = the software renderer). Full pass with GL
+  (logs\gl_full1\contact.png, standard fight keys): PAL60 dialog, namco logo, **intro movie**, difficulty, mode select,
+  character select, fight with the textured stage, **fight 60 fps** (43 of 44 s at 60). ps2x_tests 482/482.
+  **Intro movie fixed = patch 27** (fork gs-gl eed6f72, `patches/27-ps2xRuntime-gs-gl-rt-uploads.patch`): the movie
+  player uploads each picture straight into the back buffer (CT32, 40 columns of 16x448 at block 0, found with the new
+  "[gs-hw] transfers" summary of GOW_GS_HW_STATS). The GL backend wrote uploads only into its memory image, so the back
+  buffer target stayed black. Now a host->local transfer to a target's base in the target's format (width up to the
+  target's, like draws) is also written into the target's GL texture at the next flush (applyRtUpload, "rtUploads=" in
+  the stats) and its blocks no longer count as newer in memory; uploadedSinceDraw uses only the per-block record.
+  Also: "[gs-hw] rt texture tbp=.. -> target|store" log, tools\contact_sheet.py (half-size grid of a run's
+  frame_NNs.bmp -> contact.png, no Pillow). Key timing note: heavy logging (GOW_GS_HW_XFERRANGE, big dumps) slows the
+  boot and the "Start game? Yes/No" keys then land wrong ("Starting game under normal display mode" = PAL50, which
+  waits there); use the stats summaries instead.
+  **Next:** (1) PCSX2 side by side of the fight (the user's PCSX2 1.6 on E: runs the game; they drive it, we capture
+  its window read-only); (2) remaining GL differences (unsupportedBlend ~2,400/s in the fight, the frame-copy strips'
+  abe toggling = ~280 tiny batches/frame); (3) play-test longer runs with GL (stability like logs\stability1);
+  (4) sound only if it crashes.
+- **GL STAGE FIXED (2026-10-28, session 6).** Patch 26 (fork gs-gl, `patches/26-ps2xRuntime-gs-gl-stage-textures.patch`):
   the GL fight now shows the textured stage (mall, palm trees, "AQUA GARDEN" sign, lit shops) like the CPU renderer,
   without its white speckles, still a steady 60 fps (logs\gl_stage3\frame_60s/90s.png). Cause: every stage texture
   (T4/T8 pages at blocks 0x2440-0x3300) was sampled through findReinterpretSource from render target fbp 290 (a

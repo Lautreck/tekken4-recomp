@@ -44,7 +44,9 @@ $buildDir = if ($env:TEKKEN4_BUILD_DIR) { $env:TEKKEN4_BUILD_DIR } else { "runti
 $srcTree = if ($env:TEKKEN4_SRC) { $env:TEKKEN4_SRC } else { Join-Path (Split-Path -Parent $root) "tekken4-fork-ps2recomp" }  # see build_runtime.cmd
 $exe = Join-Path $srcTree "out\$buildDir\ps2xRuntime\ps2EntryRunner.exe"
 $elf = Join-Path $root "game\disc\SCES_508.78"
-# Draw on several threads like tools\run_game.cmd (set PS2X_GS_THREADS=0 beforehand to draw on one).
+# GPU (OpenGL) GS renderer by default like tools\run_game.cmd (set PS2X_GS_BACKEND=cpu beforehand for the software one).
+if (-not $env:PS2X_GS_BACKEND) { $env:PS2X_GS_BACKEND = "gl" }
+# The software renderer draws on several threads (set PS2X_GS_THREADS=0 beforehand to draw on one).
 if (-not $env:PS2X_GS_THREADS) { $env:PS2X_GS_THREADS = "auto" }
 $events = @($Shots | ForEach-Object { [pscustomobject]@{ t = [double]$_; kind = "shot"; key = "" } })
 foreach ($k in $Keys) { $t, $name = $k -split ":", 2; $events += [pscustomobject]@{ t = [double]$t; kind = "key"; key = $name } }

@@ -6,7 +6,7 @@ param([Parameter(Mandatory = $true)][string]$Task, [switch]$Remove, [switch]$Dif
 #                                                            `git diff HEAD` in the tree = only the task's edits
 #   powershell -File tools\grok_tree.ps1 -Task <t> -Diff     task edits -> logs\grok\<t>-tree.patch (new files included)
 #   powershell -File tools\grok_tree.ps1 -Task <t> -Remove   drop the tree (after the lead took the patch)
-# NOT YET wired into grok_build.cmd / grok_run.ps1: until then the task builds with TEKKEN4_SRC=<tree> set by hand.
+# tools\grok_build.cmd <t> and tools\grok_run.ps1 -Task <t> use the tree automatically when it exists.
 # Task prompt: say "PS2Recomp tree: external/wt-<t>; edit files there, not in external/PS2Recomp" and give -Owns as
 # external/wt-<t>/<file>. Game overrides (runtime/*_overrides.cpp) are still the shared ones, staged into the tree.
 $root = Split-Path -Parent $PSScriptRoot

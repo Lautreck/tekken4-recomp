@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-10-28 (session 5)_
+_Last updated: 2026-10-28 (session 6)_
 
 ## Resume here
 To continue, open Claude Code in this folder and say: "read docs/status.md and continue".
@@ -53,7 +53,23 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Next goals, in order: (1) sound: clipping (movie PCM added after the SPU clamp) and the char-select silence
   (driver stops issuing libsd/cdvd calls after a 3.26 s one-shot); (2) fps toward 60 (GS ~700 ms/s, game thread
   ~13-18 ms/frame); (3) a CD-completion-callback case for the idle-skip test.
-- **GL FIGHT SPEED (2026-10-28 ~10:40, session 5), RESTART HERE.** Patch 24 (fork gs-gl 156eca7): fight with
+- **GL FIGHT AT 60 FPS (2026-10-28, session 6), RESTART HERE.** Patch 25 (fork gs-gl ee03022,
+  `patches/25-ps2xRuntime-gs-gl-clut-batching.patch`): with PS2X_GS_BACKEND=gl the fight runs a **steady 60 fps at full
+  game speed** (in-game clock 30 s per 30 real s; logs\gl_why2, fight sec 51-103 all 60, GS ~130 ms/s on the game
+  thread; was ~35 fps / ~0.6x). Cause found with the new GOW_GS_HW_STATS "batch ends" line (why each GL batch ended,
+  which state fields differed): Tekken writes the same TEX0 with CLD=1 before every strip and the backend flushed the
+  pending batch on every LoadClut = 92% of ~120k batches/s. Now a batch resolves its palette when it starts
+  (pendingPalette, also used by the render-target reinterpret path) and ends only when the next indexed draw sees a
+  different CLUT; GSTextureStore::LoadClut returns whether it wrote CLUT memory (hash only recomputed then).
+  ps2x_tests 482/482. Batches now ~1300/frame, ended by real state changes (tex0, clamp, texsize, abe, alpha).
+  **Open (picture):** the GL stage is darker and flatter than the CPU renderer's (compare logs\gl_why2\frame_90s.png
+  with logs\stability1\frame_150s.png: CPU shows the bright "Aqua Garden" mall, palm trees, lit windows; GL a dark
+  blue night-like hall with flat colours). Already so before patch 25 (logs\gl_fight8\frame_90s.png), so not caused
+  by it. Characters and HUD look right. The CPU shots have white speckles on the fighters (CPU renderer bug?).
+  **Next, in order:** (1) the GL stage picture: PCSX2 side by side for ground truth, then find which passes are wrong
+  (unsupportedBlend ~2,400/s, stage lighting / multi-pass blends, CLUTs at cbp 0); (2) intro movie black with GL;
+  (3) make GL the default in run_capture/run_game; (4) menus/char select at 60 fps already with GL.
+- **GL FIGHT SPEED (2026-10-28 ~10:40, session 5), superseded by patch 25 above.** Patch 24 (fork gs-gl 156eca7): fight with
   PS2X_GS_BACKEND=gl ~32.5 -> ~35-36 fps. The limit is the GL thread (GSThread): the game thread blocks in
   GSThreadedBackend::PublishLocked (queue backpressure, 52% of its time), not in sync points. GL thread profile
   (TEKKEN4_PROFILE=80:10 TEKKEN4_PROFILE_THREADS=GSThread, new: thread-name filter in runtime/tekken4_overrides.cpp):

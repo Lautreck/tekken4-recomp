@@ -59,6 +59,9 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   L2/R2 = LeftShift/RightShift, Select = Tab. The keyboard now also works with a gamepad plugged in (before, the
   pad backend ignored it then). tools\run_capture.ps1 presses W/A/S/D for Up/Left/Down/Right (key names unchanged).
   PCSX2's own keyboard config (arrows = D-pad) is unchanged. Next: go through what the user reports.
+  Sound: on by default in tools\run_game.cmd (TEKKEN4_SOUND=1, user's choice 2026-10-28; =0 for the silent
+  stand-in). tools\run_capture.ps1 stays silent until one capture with sound is checked against the standard
+  fight key path (timing, fps with GL, no crash); the last sound run (2026-10-27, CPU renderer) reached the fight.
 - **PCSX2 COMPARISONS + GUEST RAND (2026-10-28, session 6), RESTART HERE.** Our CPU opponents never varied (arcade
   always Law, story always Steve, at any key timing) while PCSX2 picked Christie, Marduk, Paul. Cause: the recompiler
   maps the game's libc rand (0x2a3178) by name to the runtime stub (host std::rand), but the game's srand

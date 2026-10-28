@@ -65,7 +65,8 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   **User report with sound on:** intro movie audio "super flickery", much of it missing, unintelligible, voices
   not heard; Story Battle character select: the narrator's voice line plays. Matches the open items (movie PCM
   after the SPU clamp; WAV shorter than wall clock = fewer samples than real time -> gaps). Not worked on yet.
-  **FREEZE after winning a Story Battle fight (fixed in the map, build pending):** logs\playtest4_story_freeze.log
+  **FREEZE after winning a Story Battle fight: FIXED, confirmed by the user** (win -> replay plays, Story
+  continues; generated/ regenerated, built 19:45, no missing-target in the log). logs\playtest4_story_freeze.log
   ends with [guest-branch:missing-target] DirectJump 0x268c30. FUN_00268bf8 is a switch on a1 (1..5 via the jump
   table at 0x32f350 -> 0x268c20/0x268c28); its default case 0x268c30 (return 0) had no function entry. The
   finder ignored branches leaving a function: tools\find_missing_functions.py --escapes now seeds them

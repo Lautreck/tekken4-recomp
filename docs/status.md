@@ -62,13 +62,15 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Done: hash revalidation of re-uploaded identical textures (~60% of refreshes), upload-log tail scan, range/drawn-area
   tests before the depth check, 64-bit CLUT hash. **Biggest open lever found:** ~3 synchronous GPU readbacks per frame
   from clutFromTarget: CT32 16-entry CLUTs at cbp 0 (the back buffer's first block, drawn area) for T4 textures.
-  TEKKEN4_GL_CLUT_RT=0 skips them (CLUT from uploaded bytes): 34.9 -> **38.8 fps** (logs\gl_fight5 vs gl_fight6), but
-  the fight picture was not compared yet (run ended at the 90 s shot: use -Shots ...,90,100).
-  **Next, in order:** (1) compare the fight picture with TEKKEN4_GL_CLUT_RT=0 vs 1 (what samples a CLUT from the back
-  buffer? TEKKEN4_GL_CLUTLOG=1 + GOW_GS_HW_DUMP); if equal, make it the default or read those CLUTs without a sync
-  readback (palette texture rendered on the GPU, no ReadPixels); (2) cut GL batches per frame (sameState is too strict?
-  ~5 draws per batch; uniforms re-sent per batch) = the driver 30%; (3) stage geometry missing (black floor/hall);
-  (4) movie black with GL. Game speed is frame-locked: 60 fps is needed for full speed (now ~0.6x).
+  **Fixed (fork cdc3ad2, in patch 24): CLUTs now come from the uploaded bytes by default** (TEKKEN4_GL_CLUT_RT=1 = GoW's
+  readback): those readbacks gave wrong palettes, which is why **the stage was invisible**; with the fix the stage
+  draws (floor, hall, pillars, spectators: logs\gl_fight7_clut0, gl_fight8) and the fight runs **36.6 fps** (33-40,
+  logs\gl_fight8; CPU renderer ~28). Game speed ~0.6x until 60 fps.
+  **Next, in order:** (1) cut GL batches per frame (~3500/frame, ~5 draws per batch: sameState too strict? uniforms
+  re-sent per batch?) = the driver's ~30% of the GL thread, the fight's limit now; (2) compare the GL fight picture
+  with the CPU renderer / PCSX2 side by side (same characters: the key timing picked Law vs Law once); (3) intro
+  movie black with GL; (4) then make GL the default in run_capture/run_game. Game speed is frame-locked: 60 fps is
+  needed for full speed.
 - **GPU RENDERER (2026-10-28, session 5).** Patch 22 = God of War port's OpenGL GS renderer
   (GSThreadedBackend(GSHwBackend), GPL-3.0, copied unchanged + ~150 lines glue) behind **PS2X_GS_BACKEND=gl**; the CPU
   renderer stays default. Patch 23 = Tekken fixes: Present scale 1 / DH+1 lines / interlaced line repeat + field

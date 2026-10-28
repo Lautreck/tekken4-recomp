@@ -1,5 +1,5 @@
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
-index 674a1e4..48ea4fb 100644
+index 674a1e4..f597629 100644
 --- a/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
 @@ -442,6 +442,7 @@ void main()
@@ -140,13 +140,16 @@ index 674a1e4..48ea4fb 100644
      }
  
      RenderTarget *findTarget(uint32_t fbp)
-@@ -2384,7 +2439,9 @@ void GSHwBackend::LoadClut(const GSTex0Reg &tex0, const GSTexClutReg &texclut)
+@@ -2384,7 +2439,12 @@ void GSHwBackend::LoadClut(const GSTex0Reg &tex0, const GSTexClutReg &texclut)
  {
      Impl &d = *m_impl;
      d.flushPending();
 -    if (d.initialized)
-+    // TEKKEN4_GL_CLUT_RT=0 (experiment): CLUTs always from the uploaded bytes, never read back from a render target.
-+    static const bool clutFromRt = !(std::getenv("TEKKEN4_GL_CLUT_RT") && std::getenv("TEKKEN4_GL_CLUT_RT")[0] == '0');
++    // Tekken 4 port: CLUTs come from the uploaded bytes. GoW read a CLUT whose blocks a render target drew over back from
++    // the GPU (synchronous ReadPixels); Tekken's T4 stage textures name CLUTs at cbp 0 (the back buffer) and those
++    // readbacks gave wrong palettes (the stage was invisible) and ~3 pipeline stalls per frame (34.9 -> 38.8 fps).
++    // TEKKEN4_GL_CLUT_RT=1 restores GoW's behaviour.
++    static const bool clutFromRt = std::getenv("TEKKEN4_GL_CLUT_RT") && std::getenv("TEKKEN4_GL_CLUT_RT")[0] == '1';
 +    if (d.initialized && clutFromRt)
          d.store.LoadClut(tex0, texclut, [&d](const GSTex0Reg &t, uint32_t width, const uint16_t *xy, uint32_t count, uint32_t *words)
                           { return d.clutFromTarget(t, width, xy, count, words); });

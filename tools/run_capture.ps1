@@ -1,18 +1,19 @@
 param([string]$RunDir = "", [string[]]$Shots = @("20"), [string[]]$Keys = @())
 # powershell -File passes a list like 9,20 or "10:Down","12:Cross" as one comma-joined string: split it here.
 $Shots = @($Shots | ForEach-Object { $_ -split ',' } | Where-Object { $_ } | ForEach-Object { [double]$_ })
+$Shots = @($Shots | Sort-Object { [double]$_ } -Unique)  # the runtime takes frame shots in list order ($Shots is string[])
 $Keys = @($Keys | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 # Runs ps2EntryRunner on the Tekken 4 ELF, hides the runtime's debug panel (F1), presses pad buttons at given
 # times, saves window captures at the given second marks, then closes it. Output: stdout.txt, stderr.txt and
 # shot_NNs.png in $RunDir (default logs\run_<time>).
-# Keys are "<seconds>:<key>" with key = Up, Down, Left, Right, Start, Cross, Circle, Square, Triangle, posted to
-# the window as key presses (held ~250 ms) that the runtime maps to pad 1 (D-pad WASD, Enter, X, C, Z, V; patch 29).
+# Keys are "<seconds>:<key>" with key = Up, Down, Left, Right, Start, Select, Cross, Circle, Square, Triangle, posted
+# to the window as key presses (held ~250 ms) that the runtime maps to pad 1 (D-pad WASD, Enter, Tab, X, C, Z, V; patch 29).
 # Always pick PAL60 on the display-mode menu (user's request):
 #   powershell -File tools\run_capture.ps1 -Keys "10:Down","12:Cross" -Shots 9,11,16,25
 $root = Split-Path -Parent $PSScriptRoot
 if (-not $RunDir) { $RunDir = Join-Path $root ("logs\run_" + (Get-Date -Format "yyyyMMdd_HHmmss")) }
-$vk = @{ Up = 0x57; Down = 0x53; Left = 0x41; Right = 0x44; Start = 0x0D; Cross = 0x58; Circle = 0x43; Square = 0x5A; Triangle = 0x56 }
-$scan = @{ Up = 0x11; Down = 0x1F; Left = 0x1E; Right = 0x20; Start = 0x1C; Cross = 0x2D; Circle = 0x2E; Square = 0x2C; Triangle = 0x2F }
+$vk = @{ Up = 0x57; Down = 0x53; Left = 0x41; Right = 0x44; Start = 0x0D; Select = 0x09; Cross = 0x58; Circle = 0x43; Square = 0x5A; Triangle = 0x56 }
+$scan = @{ Up = 0x11; Down = 0x1F; Left = 0x1E; Right = 0x20; Start = 0x1C; Select = 0x0F; Cross = 0x2D; Circle = 0x2E; Square = 0x2C; Triangle = 0x2F }
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
 using System;

@@ -53,7 +53,26 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Next goals, in order: (1) sound: clipping (movie PCM added after the SPU clamp) and the char-select silence
   (driver stops issuing libsd/cdvd calls after a 3.26 s one-shot); (2) fps toward 60 (GS ~700 ms/s, game thread
   ~13-18 ms/frame); (3) a CD-completion-callback case for the idle-skip test.
-- **GROK WAVE (2026-10-28 ~20:30, session 6), RESTART HERE.** User: "fix all of those at the same time by using grok".
+- **WAVE RESULTS (2026-10-28 ~21:50, session 6), RESTART HERE.**
+  - **Input lag: patch 31** (fork 0df63e0, from Grok input-lag, reviewed + 2 fixes): key -> first changed frame
+    median 29.8 -> 14.8 ms (tools\input_lag.ps1 -Task <t> -Mode fast -Present paced; logs\input_lag_claude1),
+    fight 60 fps, 482/482. TEKKEN4_INPUT_LAG=1 logs per press; TEKKEN4_INPUT_LEGACY=1 = old path.
+  - **Fixed test fight: tools\run_fixed_fight.ps1** (user's request): Practice, Kazuya vs CPU Yoshimitsu, -Stage
+    (default arena), -Task <grok task>, -Env. The stage select opens on a RANDOM slot (shows a random card);
+    Right from it = airport .. arena, Left once = arena (logs\fixed_try4..8). tools\stage_card.py checks the card
+    (refs in logs\stage_refs, game imagery, not in git). run_capture.ps1: Select key (Tab), shots sorted
+    numerically. TEKKEN4_RAND_SEED=<n> (runtime\tekken4_testseed_overrides.cpp) pins srand but does NOT fix the
+    stage card (timing-dependent).
+  - **User's "lag" in Practice:** (a) the Arena stage itself: 34 fps, ~1250 GL batches/frame (cage: TEX0/CLAMP
+    per prim; airport 60 fps) -> Grok task arena-perf (prompt docs/ai/prompts/arena-perf.md); (b) runs during
+    Grok builds stall (H: is a USB HDD shared by builds, ISO, game data, and an elevated python copying
+    ~115 MB/s since 19:34 that is not ours).
+  - **Music:** Grok music ran out of turns ($12): stream = VoiceTrans iop 0xc7000 -> spu 0x1b8000, SPU2 IRQ
+    refills 256 B but the source is all zeros; IOP cdvdman HLE has no sceCdSt*. Continue: docs/ai/prompts/music-2.md
+    (tree external\wt-music keeps its diagnostics; runtime/tekken4_overrides.cpp has its +38 uncommitted lines:
+    do not stage into the fork until music lands).
+  - Escape still quits the game (todo below).
+- **GROK WAVE (2026-10-28 ~20:30, session 6).** User: "fix all of those at the same time by using grok".
   Running detached (tools\grok_list.ps1): **music** (tree external\wt-music, owns IOP sound files +
   runtime/tekken4_overrides.cpp), **input-lag** (tree external\wt-input-lag, owns pad/present files + new
   tools/input_lag.ps1), **test-mode** (no build, owns new tools/run_fixed_fight.ps1: fixed CPU opponent + stage).

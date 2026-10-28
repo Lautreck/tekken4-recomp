@@ -3,7 +3,8 @@ param(
     [string]$PromptFile = "",
     [ValidateSet("ask", "work", "lead")][string]$Mode = "ask",
     [string[]]$Owns = @(),
-    [string]$Effort = "high"
+    [string]$Effort = "high",
+    [int]$MaxTurns = 0  # 0 = grok_task.ps1's default (150); deep IOP/driver tasks ran out of turns at 150
 )
 # The only way to start Grok (user rule 2026-10-22): an independent hidden Windows process, so a Claude session end, a
 # terminal or PC restart never interrupts it. Returns at once with the PID; the result lands in logs\grok\<Name>_<time>.json
@@ -23,6 +24,7 @@ if ($Mode -eq "lead") {
     $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$root\tools\grok_task.ps1`"", "-Name", $Name,
         "-Mode", $Mode, "-Effort", $Effort, "-PromptFile", "`"$prompt`"")
     if ($Owns.Count) { $argList += @("-Owns", ($Owns -join ",")) }
+    if ($MaxTurns -gt 0) { $argList += @("-MaxTurns", "$MaxTurns") }
 }
 $p = Start-Process -FilePath "powershell.exe" -ArgumentList $argList -WindowStyle Hidden -PassThru
 "grok $Name ($Mode) started detached, pid $($p.Id); result: logs\grok\${Name}_<time>.json, branch grok/wip"

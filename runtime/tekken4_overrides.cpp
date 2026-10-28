@@ -297,7 +297,8 @@ namespace tekken4
     // and logs them as a second, combined list.
     std::atomic<HANDLE> g_gameThread{nullptr};
 
-    std::vector<HANDLE> otherProcessThreads(DWORD gameThreadId)
+    // nameFilter: only threads whose description (SetThreadDescription, e.g. "GSThread") contains it; empty = all.
+    std::vector<HANDLE> otherProcessThreads(DWORD gameThreadId, const std::string &nameFilter = {})
     {
         std::vector<HANDLE> threads;
         const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
@@ -310,8 +311,27 @@ namespace tekken4
             if (entry.th32OwnerProcessID != GetCurrentProcessId() || entry.th32ThreadID == GetCurrentThreadId() ||
                 entry.th32ThreadID == gameThreadId)
                 continue;
-            if (HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, entry.th32ThreadID))
-                threads.push_back(h);
+            HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_LIMITED_INFORMATION, FALSE,
+                                 entry.th32ThreadID);
+            if (!h)
+                continue;
+            if (!nameFilter.empty())
+            {
+                PWSTR description = nullptr;
+                std::string name;
+                if (SUCCEEDED(GetThreadDescription(h, &description)) && description)
+                {
+                    for (const wchar_t *c = description; *c; ++c)
+                        name.push_back(static_cast<char>(*c < 128 ? *c : '?'));
+                    LocalFree(description);
+                }
+                if (name.find(nameFilter) == std::string::npos)
+                {
+                    CloseHandle(h);
+                    continue;
+                }
+            }
+            threads.push_back(h);
         }
         CloseHandle(snapshot);
         return threads;
@@ -346,14 +366,17 @@ namespace tekken4
         const double start = std::atof(spec);
         const char *colon = std::strchr(spec, ':');
         const double seconds = colon ? std::atof(colon + 1) : 10.0;
+        // TEKKEN4_PROFILE_THREADS=all: every other thread; =<name>: only threads whose description contains it
+        // (e.g. GSThread = the GL renderer's thread).
         const char *threadsEnv = std::getenv("TEKKEN4_PROFILE_THREADS");
-        const bool allThreads = threadsEnv && std::strcmp(threadsEnv, "all") == 0;
-        std::thread([start, seconds, allThreads]() {
+        const bool allThreads = threadsEnv && *threadsEnv;
+        const std::string threadFilter = (allThreads && std::strcmp(threadsEnv, "all") != 0) ? threadsEnv : "";
+        std::thread([start, seconds, allThreads, threadFilter]() {
             std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(start * 1000.0)));
             HANDLE thread = g_gameThread.load();
             if (!thread)
                 return;
-            std::vector<HANDLE> others = allThreads ? otherProcessThreads(GetThreadId(thread)) : std::vector<HANDLE>{};
+            std::vector<HANDLE> others = allThreads ? otherProcessThreads(GetThreadId(thread), threadFilter) : std::vector<HANDLE>{};
             std::unordered_map<DWORD64, uint32_t> samples, otherSamples;
             uint32_t total = 0u, otherTotal = 0u;
             const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<int>(seconds * 1000.0));

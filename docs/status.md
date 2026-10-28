@@ -53,7 +53,23 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Next goals, in order: (1) sound: clipping (movie PCM added after the SPU clamp) and the char-select silence
   (driver stops issuing libsd/cdvd calls after a 3.26 s one-shot); (2) fps toward 60 (GS ~700 ms/s, game thread
   ~13-18 ms/frame); (3) a CD-completion-callback case for the idle-skip test.
-- **GPU RENDERER (2026-10-28, session 5), RESTART HERE.** Patch 22 = God of War port's OpenGL GS renderer
+- **GL FIGHT SPEED (2026-10-28 ~10:40, session 5), RESTART HERE.** Patch 24 (fork gs-gl 156eca7): fight with
+  PS2X_GS_BACKEND=gl ~32.5 -> ~35-36 fps. The limit is the GL thread (GSThread): the game thread blocks in
+  GSThreadedBackend::PublishLocked (queue backpressure, 52% of its time), not in sync points. GL thread profile
+  (TEKKEN4_PROFILE=80:10 TEKKEN4_PROFILE_THREADS=GSThread, new: thread-name filter in runtime/tekken4_overrides.cpp):
+  NVIDIA driver ~30% (DrvPresentBuffers/DDI escapes: ~120k GL batches/s = ~3500 per frame, each with its own state +
+  draw call), index decodes ~8%, CLUT ~10%, findReinterpretSource 10% (fixed after that profile).
+  Done: hash revalidation of re-uploaded identical textures (~60% of refreshes), upload-log tail scan, range/drawn-area
+  tests before the depth check, 64-bit CLUT hash. **Biggest open lever found:** ~3 synchronous GPU readbacks per frame
+  from clutFromTarget: CT32 16-entry CLUTs at cbp 0 (the back buffer's first block, drawn area) for T4 textures.
+  TEKKEN4_GL_CLUT_RT=0 skips them (CLUT from uploaded bytes): 34.9 -> **38.8 fps** (logs\gl_fight5 vs gl_fight6), but
+  the fight picture was not compared yet (run ended at the 90 s shot: use -Shots ...,90,100).
+  **Next, in order:** (1) compare the fight picture with TEKKEN4_GL_CLUT_RT=0 vs 1 (what samples a CLUT from the back
+  buffer? TEKKEN4_GL_CLUTLOG=1 + GOW_GS_HW_DUMP); if equal, make it the default or read those CLUTs without a sync
+  readback (palette texture rendered on the GPU, no ReadPixels); (2) cut GL batches per frame (sameState is too strict?
+  ~5 draws per batch; uniforms re-sent per batch) = the driver 30%; (3) stage geometry missing (black floor/hall);
+  (4) movie black with GL. Game speed is frame-locked: 60 fps is needed for full speed (now ~0.6x).
+- **GPU RENDERER (2026-10-28, session 5).** Patch 22 = God of War port's OpenGL GS renderer
   (GSThreadedBackend(GSHwBackend), GPL-3.0, copied unchanged + ~150 lines glue) behind **PS2X_GS_BACKEND=gl**; the CPU
   renderer stays default. Patch 23 = Tekken fixes: Present scale 1 / DH+1 lines / interlaced line repeat + field
   offset in the present shader, index-texture dirty-row re-decode (font glyph uploads re-decoded the whole font page),

@@ -72,6 +72,9 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
     refills 256 B but the source is all zeros; IOP cdvdman HLE has no sceCdSt*. Continue: docs/ai/prompts/music-2.md
     (tree external\wt-music keeps its diagnostics; runtime/tekken4_overrides.cpp has its +38 uncommitted lines:
     do not stage into the fork until music lands).
+  - music-2 also ran out of 150 turns ($11.6). Its lead: IOP sifcmd ordinal 10 (sceSifAddCmdHandler) is dropped
+    (iop_rpc.cpp dispatchSifCmdImport -> setV0(0)), so EE sceSifSendCmd data may never reach zsiopdrv. **music-3**
+    started 22:1x with 300 turns (docs/ai/prompts/music-3.md; grok_start.ps1 -MaxTurns now exists).
   - Escape no longer quits the game: patch 32 (fork, SetExitKey(KEY_NULL)); only the window X closes it.
 - **GROK WAVE (2026-10-28 ~20:30, session 6).** User: "fix all of those at the same time by using grok".
   Running detached (tools\grok_list.ps1): **music** (tree external\wt-music, owns IOP sound files +

@@ -67,6 +67,9 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   frame_NNs.bmp -> contact.png, no Pillow). Key timing note: heavy logging (GOW_GS_HW_XFERRANGE, big dumps) slows the
   boot and the "Start game? Yes/No" keys then land wrong ("Starting game under normal display mode" = PAL50, which
   waits there); use the stats summaries instead.
+  **GL stability (logs\gl_stability1, 430 s, standard keys):** no crash, no GL error: fight, game over, GREATEST
+  SURVIVORS ranking, attract demo fight, intro movie replay from 375 s (30 fps = movie rate); 326 s at 60 fps. Whole
+  intro movie with GL: logs\gl_moviefull1\contact.png (the black frame ~15 s in is the movie's own cut, same in both runs).
   **Next:** (1) PCSX2 side by side of the fight (the user's PCSX2 1.6 on E: runs the game; they drive it, we capture
   its window read-only); (2) remaining GL differences (unsupportedBlend ~2,400/s in the fight, the frame-copy strips'
   abe toggling = ~280 tiny batches/frame); (3) play-test longer runs with GL (stability like logs\stability1);

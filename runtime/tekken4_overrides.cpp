@@ -940,6 +940,31 @@ namespace tekken4
         setReturnU32(ctx, cur);
     }
 
+    // The game's libc rand (0x2a3178). The recompiler maps it by name to the runtime's stub, which returns the host's
+    // std::rand(); the game's srand (0x2a3168) is not stubbed and seeds the guest state, which that stub never reads.
+    // The host generator was therefore never seeded: every run drew the same numbers and the CPU picked the same
+    // opponents (arcade always Law, story always Steve) where PCSX2 varies. This is the game's own routine:
+    // next = next * 1103515245 + 12345 on the 32-bit word at reent + 88 (reent = *0x3059d4), result next & 0x7fffffff.
+    constexpr uint32_t kRand = 0x002a3178u;
+    constexpr uint32_t kReentPtr = 0x003059d4u;
+    void guestRand(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        (void)runtime;
+        ctx->pc = getRegU32(ctx, 31);
+        uint32_t reent = 0, next = 0;
+        std::memcpy(&reent, rdram + kReentPtr, 4);
+        uint8_t *state = getMemPtr(rdram, reent + 88u);
+        if (!state)
+        {
+            setReturnS32(ctx, 0);
+            return;
+        }
+        std::memcpy(&next, state, 4);
+        next = next * 1103515245u + 12345u;
+        std::memcpy(state, &next, 4);
+        setReturnS32(ctx, static_cast<int32_t>(next & 0x7FFFFFFFu));
+    }
+
     // Debug: the same close, logged from frame 4 on (TEKKEN4_IRQ_LOG).
     std::atomic<int> g_closeLogLeft{60};
     void closeTagLogged(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
@@ -1218,6 +1243,7 @@ namespace tekken4
         runtime.registerFunction(0x00292c18u, closeDmaTag);
         runtime.registerFunction(kSceMpegGetPicture, mpegGetPicture);
         runtime.registerFunction(kIpuImagesDecode, ipuImagesDecode);
+        runtime.registerFunction(kRand, guestRand);
         if (const char *presentLog = std::getenv("TEKKEN4_PRESENT_LOG"))
         {
             // Debug aid for a shaking picture: for <seconds>, samples the presented frame every 5 ms and logs each

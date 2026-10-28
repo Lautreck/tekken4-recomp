@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-10-28 (session 6)_
+_Last updated: 2026-10-28 22:25 (session 6, end)_
 
 ## Resume here
 To continue, open Claude Code in this folder and say: "read docs/status.md and continue".
@@ -53,7 +53,21 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Next goals, in order: (1) sound: clipping (movie PCM added after the SPU clamp) and the char-select silence
   (driver stops issuing libsd/cdvd calls after a 3.26 s one-shot); (2) fps toward 60 (GS ~700 ms/s, game thread
   ~13-18 ms/frame); (3) a CD-completion-callback case for the idle-skip test.
-- **WAVE RESULTS (2026-10-28 ~21:50, session 6), RESTART HERE.**
+- **NEXT SESSION STARTS HERE (saved 2026-10-28 22:25, Claude at 74 % usage; user: "stop here, Grok works on
+  its own until the usage reset at 12 am").** Running detached: Grok **arena-perf** (tree wt-arena-perf), **music-3**
+  (wt-music, 300 turns), **hud** (wt-hud); **tools\grok_chain.ps1** (pid 81124, log logs\grok\chain-stage-sweep.log)
+  starts Grok **stage-sweep** (docs/ai/prompts/stage-sweep.md: each stage 30 s in Practice, sound on, fps table +
+  profile of unstable stages; measures only) when those three have finished. TO DO next session, in order:
+  (1) `powershell -File tools\grok_list.ps1`; read logs\grok\<task>_<time>.json + <task>-notes.md for each;
+  (2) review each code task: `tools\grok_tree.ps1 -Task <t> -Diff` (exclude ps2xRuntime/src/runner/register_functions.cpp,
+  = generated game code), check its numbers, build + test in its tree (TEKKEN4_SRC=external\wt-<t>,
+  TEKKEN4_BUILD_DIR=grok-<t>, tools\build_runtime.cmd / build_tests.cmd), run tools\run_fixed_fight.ps1 -Task <t>,
+  then apply to the fork (author Pablo), export patches/NN, commit + push; music touches runtime/tekken4_overrides.cpp
+  (its uncommitted edits sit in the main working tree: commit only the final, reviewed version);
+  (3) rebuild the default build so tools\run_game.cmd gets them; ask the user to play;
+  (4) stage-sweep table -> the next 60 fps work; user goals: perfect 60 in fights (movie is a perfect 30), HUD,
+  then "completely control the graphics".
+- **WAVE RESULTS (2026-10-28 ~21:50, session 6).**
   - **Input lag: patch 31** (fork 0df63e0, from Grok input-lag, reviewed + 2 fixes): key -> first changed frame
     median 29.8 -> 14.8 ms (tools\input_lag.ps1 -Task <t> -Mode fast -Present paced; logs\input_lag_claude1),
     fight 60 fps, 482/482. TEKKEN4_INPUT_LAG=1 logs per press; TEKKEN4_INPUT_LEGACY=1 = old path. User played

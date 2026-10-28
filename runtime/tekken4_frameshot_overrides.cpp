@@ -1,4 +1,4 @@
-// Tekken 4 (SCES-50878, PAL v2.00): screenshots from the runtime's own presented frame, independent of the window.
+// Tekken 4 (SLUS-20328, NTSC-U v1.00): screenshots from the runtime's own presented frame, independent of the window.
 // Window captures (tools\run_capture.ps1, PrintWindow) come back blank while the monitor is off or the game runs from
 // a hidden process (Grok tasks): this writes frame_<NN>s.bmp into the working directory (the run dir) instead.
 //
@@ -88,5 +88,5 @@ namespace tekken4_frameshot
     }
 }
 
-PS2_REGISTER_GAME_OVERRIDE("Tekken 4 frame shots (SCES-50878 v2.00)", "SCES_508.78", 0x00180088u, 0xBEFFF97Au,
+PS2_REGISTER_GAME_OVERRIDE("Tekken 4 frame shots (SLUS-20328 v1.00)", "SLUS_203.28", 0x00180088u, 0xB975F704u,
                            tekken4_frameshot::apply)

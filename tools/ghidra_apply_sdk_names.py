@@ -3,7 +3,7 @@
 ExportPS2Functions.java doesn't use the SCE symbol database, so without this step the
 Ghidra export loses every SDK name and the recompiler can't bind runtime handlers.
 
-Usage (Ghidra open on SCES_508.78 with GhidraMCPPlugin enabled):
+Usage (Ghidra open on SLUS_203.28 with GhidraMCPPlugin enabled):
   python -I tools/ghidra_apply_sdk_names.py            # dry run, prints what would change
   python -I tools/ghidra_apply_sdk_names.py --apply    # rename in Ghidra
 

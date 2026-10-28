@@ -68,7 +68,7 @@ if (-not $Exe) {
     $srcTree = $env:TEKKEN4_SRC
     $Exe = Join-Path $srcTree "out\$($env:TEKKEN4_BUILD_DIR)\ps2xRuntime\ps2EntryRunner.exe"
 }
-$elf = Join-Path $root "game\disc\SCES_508.78"
+$elf = Join-Path $root "game\disc\SLUS_203.28"
 if (-not (Test-Path $Exe)) { throw "runner not built: $Exe" }
 
 $events = @(

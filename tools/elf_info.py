@@ -1,6 +1,6 @@
 """Quick PS2 (MIPS R5900) ELF inspector.
 
-Usage: python -I tools/elf_info.py game/disc/SCES_508.78
+Usage: python -I tools/elf_info.py game/disc/SLUS_203.28
 
 Prints headers, sections, symbol-table stats, debug-info hints and the
 Sony SDK library version strings embedded in the binary. Read-only.
@@ -90,4 +90,4 @@ def main(path):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "game/disc/SCES_508.78")
+    main(sys.argv[1] if len(sys.argv) > 1 else "game/disc/SLUS_203.28")

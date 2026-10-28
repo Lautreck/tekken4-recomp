@@ -28,7 +28,12 @@ MAP_CSV = "config/function_map.csv"
 
 
 def main():
-    starts = set(ghidra_functions("http://127.0.0.1:8080/"))
+    # --starts <file>: the function starts tools\ghidra_headless.cmd wrote (DumpFunctionStarts.java), no GhidraMCP
+    if "--starts" in sys.argv:
+        with open(sys.argv[sys.argv.index("--starts") + 1]) as f:
+            starts = {int(line, 16) for line in f if line.strip()}
+    else:
+        starts = set(ghidra_functions("http://127.0.0.1:8080/"))
     with open(FULL_CSV, newline="") as f:
         rows = list(csv.reader(f))
     keep = [rows[0]] + [r for r in rows[1:] if int(r[1], 16) in starts]
@@ -45,7 +50,7 @@ def main():
 
     with open(TOML) as f:
         text = f.read()
-    for key, value in (("input", "game/disc/SCES_508.78"), ("output", "generated/"), ("ghidra_output", MAP_CSV)):
+    for key, value in (("input", "game/disc/SLUS_203.28"), ("output", "generated/"), ("ghidra_output", MAP_CSV)):
         text = re.sub(rf"^{key} = .*$", f'{key} = "{value}"', text, count=1, flags=re.M)
     with open(TOML, "w") as f:
         f.write(text)

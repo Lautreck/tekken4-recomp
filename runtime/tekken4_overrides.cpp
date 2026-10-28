@@ -1,4 +1,4 @@
-// Tekken 4 (SCES-50878, PAL v2.00) overrides for PS2Recomp's ps2xRuntime.
+// Tekken 4 (SLUS-20328, NTSC-U v1.00) overrides for PS2Recomp's ps2xRuntime.
 // tools\stage_generated.cmd copies this file into ps2xRuntime/src/runner next to the generated code.
 // Addresses are for this ELF only (matched by name, entry point and CRC32 below).
 #include "game_overrides.h"
@@ -41,18 +41,18 @@
 
 namespace tekken4
 {
-    // Namco's sound driver runs on the IOP and serves SIF RPC id 0x12345. Its EE library (0x2230d0-0x224140)
-    // binds one client (0x1cccbc0) and only makes synchronous calls: 4 words in at 0x1ccc700 (the per-frame
-    // call 0x100 sends a 0x80-byte command queue at 0x1ccc7c0 instead), 8 words back at 0x1ccc780.
-    // FUN_002230d0 retries the bind every vsync until client.server != 0, so without a server boot stops there.
+    // Namco's sound driver runs on the IOP and serves SIF RPC id 0x12345. Its EE library (0x222788-0x2237f8)
+    // binds one client (0x1cca440) and only makes synchronous calls: 4 words in at 0x1cc9f80 (the per-frame
+    // call 0x100 sends a 0x80-byte command queue at 0x1cca040 instead), 8 words back at 0x1cca000.
+    // FUN_00222788 retries the bind every vsync until client.server != 0, so without a server boot stops there.
     // TEKKEN4_SOUND=1 plus an ISO forwards this SID to zsiopdrv, except mode-0 disc reads and the movie
     // calls (0x3000/0x3100/0x3200), which stay on the local HLE. Without that env every call is answered
     // at once with a zeroed reply: no sound.
     constexpr uint32_t kSoundSid = 0x12345u;
-    constexpr uint32_t kSceSifBindRpc = 0x00282808u;
-    constexpr uint32_t kSceSifCallRpc = 0x002829d8u;
-    constexpr uint32_t kSceSifCheckStatRpc = 0x00282bc8u;
-    constexpr uint32_t kSceSifSendCmd = 0x00281F40u;
+    constexpr uint32_t kSceSifBindRpc = 0x00281bc8u;
+    constexpr uint32_t kSceSifCallRpc = 0x00281d98u;
+    constexpr uint32_t kSceSifCheckStatRpc = 0x00281f88u;
+    constexpr uint32_t kSceSifSendCmd = 0x00281300u;
     constexpr uint32_t kSifCmdSetSreg = 0x80000001u; // ps2sdk SIF_CMD_SET_SREG, packet+16 index, packet+20 value
 
     // t_SifRpcClientData: 16-byte header, then command, buf, cbuf, end_function, end_param, server.
@@ -60,18 +60,18 @@ namespace tekken4
     constexpr uint32_t kClientBodySize = 0x18u;
     constexpr uint32_t kClientServerOffset = 0x24u;
     constexpr uint32_t kMaxReplySize = 0x1000u;
-    constexpr uint32_t kSoundFrameCall = 0x100u; // FUN_002232a0, once per pass of the main loop (FUN_001969f8)
+    constexpr uint32_t kSoundFrameCall = 0x100u; // FUN_00222958, once per pass of the main loop (FUN_001969f8)
 
-    // The same driver is the game's disc loader. FUN_002155d0 sends call 0x200 with (sector, EE destination,
-    // size, mode) in the 4 send words. Sectors count from the start of TEKKEN/DATA.BIN (file table at 0x314360:
+    // The same driver is the game's disc loader. FUN_00214cb8 sends call 0x200 with (sector, EE destination,
+    // size, mode) in the 4 send words. Sectors count from the start of TEKKEN/DATA.BIN (file table at 0x3133e0:
     // sector, size, checksum, key; with that base every checksum matches). When the read is done the driver
-    // triggers callback 0x229328, which does done_flag += 1 at gp-0x5148 = 0x35a128; the loader polls that flag
-    // (FUN_002297b0), decrypts the first 4 KB (~word + key) and checks the file's checksum.
+    // triggers callback 0x2289c8, which does done_flag += 1 at gp-0x5148 = 0x357a28; the loader polls that flag
+    // (FUN_00228e50), decrypts the first 4 KB (~word + key) and checks the file's checksum.
     constexpr uint32_t kDiscReadCall = 0x200u;
-    constexpr uint32_t kDiscReadDoneFlag = 0x0035a128u;
-    // Where TEKKEN/DATA.BIN sits on this disc (ISO9660 directory of SCES-50878 v2.00).
-    constexpr uint64_t kDataBinLbn = 1236u;
-    constexpr uint64_t kDataBinSize = 2694412288u;
+    constexpr uint32_t kDiscReadDoneFlag = 0x00357a28u;
+    // Where TEKKEN/DATA.BIN sits on this disc (ISO9660 directory of SLUS-20328 v1.00).
+    constexpr uint64_t kDataBinLbn = 401u;
+    constexpr uint64_t kDataBinSize = 2695536640u;
     std::ifstream g_disc;            // the ISO, or else a loose DATA.BIN extracted next to the ELF
     uint64_t g_discBase = 0u;        // byte offset of DATA.BIN inside g_disc
     bool g_discTried = false;
@@ -149,21 +149,21 @@ namespace tekken4
         std::memcpy(rdram + kDiscReadDoneFlag, &done, 4);
     }
 
-    // Movies (player FUN_00228520). Call 0x3000 (sector, size, file, mode) opens a movie file; each 0x3200
+    // Movies (player FUN_00227bd8). Call 0x3000 (sector, size, file, mode) opens a movie file; each 0x3200
     // (EE destination, sectors) then asks for the next sectors of its video, into a ring the player decodes with
     // libmpeg. The files interleave 0x27 sectors of MPEG-2 video with 2 sectors of SPU ADPCM audio, which the
     // driver keeps (PCSX2's ring holds the video units back to back). The driver answers with SIF command 4,
-    // whose handler 0x229350 stores the byte count at gp-0x5144 = 0x35a12c; the player sets it to -1 before
-    // asking (FUN_00229108). Call 0x3100 closes the stream. Mode 1 (0x10000-byte requests) is not verified yet.
+    // whose handler 0x2289f0 stores the byte count at gp-0x5144 = 0x357a2c; the player sets it to -1 before
+    // asking (FUN_002287a8). Call 0x3100 closes the stream. Mode 1 (0x10000-byte requests) is not verified yet.
     constexpr uint32_t kMovieOpenCall = 0x3000u;
     constexpr uint32_t kMovieReadCall = 0x3200u;
     constexpr uint32_t kMovieCloseCall = 0x3100u;
-    constexpr uint32_t kMovieReadResult = 0x0035a12cu;
+    constexpr uint32_t kMovieReadResult = 0x00357a2cu;
     constexpr uint32_t kMovieVideoBytes = 0x27u * 2048u; // per interleave unit
     constexpr uint32_t kMovieAudioBytes = 2u * 2048u;
     // The driver's per-frame reply (call 0x100, word 3) carries the movie stream's status: 0x200 = its audio is
-    // ready (FUN_00229040; the player starts the sound and the picture display only then), 0x100 = the stream has
-    // ended (FUN_00229030).
+    // ready (FUN_002286e0; the player starts the sound and the picture display only then), 0x100 = the stream has
+    // ended (FUN_002286d0).
     constexpr uint32_t kFrameReplyStatusWord = 3u;
     constexpr uint32_t kStatusMovieAudioReady = 0x200u;
     constexpr uint32_t kStatusMovieEnded = 0x100u;
@@ -602,7 +602,7 @@ namespace tekken4
         }
 
         // Real bind records the client under SID 0x12345 even when the IRX has not called
-        // sceSifRegisterRpc yet. This ELF spins at 0x2230f0 until client.server != 0, and the module
+        // sceSifRegisterRpc yet. This ELF spins at 0x2227a8 until client.server != 0, and the module
         // load that would register the SID is not reached while that spin runs. A zeroed placeholder
         // (not the client itself: SifCallRpc writes through server) lets boot continue. Calls still
         // dispatch on the SID, so they hit zsiopdrv once its entry has registered.
@@ -837,7 +837,7 @@ namespace tekken4
 
     // The recompiled sceSifSendCmd ends in ps2_syscalls::sceSifSendCmd, which copies an extra payload and
     // returns 1. It does not store SIF_CMD_SET_SREG. zsiopdrv's init (handler 0x4c6b4) spins on
-    // sceSifGetSreg(31) until that store is non-zero. The game writes index 31 = 1 at 0x229608, before the bind.
+    // sceSifGetSreg(31) until that store is non-zero. The game writes index 31 = 1 at 0x228ca8, before the bind.
     void sifSendCmd(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         ctx->pc = getRegU32(ctx, 31);
@@ -873,7 +873,7 @@ namespace tekken4
 
     std::string ringState(const uint8_t *rdram)
     {
-        const uint8_t *s = rdram + 0x1cda2c0u;
+        const uint8_t *s = rdram + 0x1cd7b40u;
         int32_t pending = 0;
         std::memcpy(&pending, s + 4, 4);
         std::ostringstream o;
@@ -894,7 +894,7 @@ namespace tekken4
         // First time path 1 ends before the frame-end +1 (VIF1 end count 2 while nothing is pending), save the
         // ring so it can be compared with PCSX2's (logs: ring_early_end.bin, 0x100000-0x110000).
         static bool dumped = false;
-        const uint8_t *s = rdram + 0x1cda2c0u;
+        const uint8_t *s = rdram + 0x1cd7b40u;
         int32_t pending = 0;
         std::memcpy(&pending, s + 4, 4);
         if (!dumped && cause == 1u && s[2] == 2u && pending == 0 && s[3] == 1u)
@@ -905,7 +905,7 @@ namespace tekken4
         }
     }
 
-    // The game's "close DMA tag" of its VIF packet library (0x292900, not recognised as an SDK function, so it runs
+    // The game's "close DMA tag" of its VIF packet library (0x291cc0, not recognised as an SDK function, so it runs
     // as game code): pads pk->cur to a qword, then ADDS (cur - tag)/16 - 1 to the open tag's first word. The
     // runtime's stubs for the recognised library calls (sceGifPkAddGsAD etc.) already keep that qwc field up to
     // date as they write (refreshPacketBuilderPendingCount), so tags built with both came out with qwc doubled
@@ -940,13 +940,13 @@ namespace tekken4
         setReturnU32(ctx, cur);
     }
 
-    // The game's libc rand (0x2a3178). The recompiler maps it by name to the runtime's stub, which returns the host's
-    // std::rand(); the game's srand (0x2a3168) is not stubbed and seeds the guest state, which that stub never reads.
+    // The game's libc rand (0x2a2538). The recompiler maps it by name to the runtime's stub, which returns the host's
+    // std::rand(); the game's srand (0x2a2528) is not stubbed and seeds the guest state, which that stub never reads.
     // The host generator was therefore never seeded: every run drew the same numbers and the CPU picked the same
     // opponents (arcade always Law, story always Steve) where PCSX2 varies. This is the game's own routine:
-    // next = next * 1103515245 + 12345 on the 32-bit word at reent + 88 (reent = *0x3059d4), result next & 0x7fffffff.
-    constexpr uint32_t kRand = 0x002a3178u;
-    constexpr uint32_t kReentPtr = 0x003059d4u;
+    // next = next * 1103515245 + 12345 on the 32-bit word at reent + 88 (reent = *0x304b94), result next & 0x7fffffff.
+    constexpr uint32_t kRand = 0x002a2538u;
+    constexpr uint32_t kReentPtr = 0x00304b94u;
     void guestRand(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         (void)runtime;
@@ -992,7 +992,7 @@ namespace tekken4
         }
     }
 
-    // Around the open-CNT (0x292970) and sceGifPkCloseGifTag (0x292b28): pk words and the scratchpad qwords.
+    // Around the open-CNT (0x291d30) and sceGifPkCloseGifTag (0x291ee8): pk words and the scratchpad qwords.
     std::atomic<int> g_pkLogLeft{40};
     void logPk(const char *what, uint8_t *rdram, uint32_t pk, const char *when)
     {
@@ -1018,7 +1018,7 @@ namespace tekken4
             RUNTIME_LOG("[tekken4] open CNT args a1 " << std::hex << getRegU32(ctx, 5) << " a2 " << getRegU32(ctx, 6)
                                                       << " a3 " << getRegU32(ctx, 7) << " ra " << getRegU32(ctx, 31)
                                                       << std::dec << "\n");
-        FUN_00292970_0x292970(rdram, ctx, runtime);
+        FUN_00291d30_0x291d30(rdram, ctx, runtime);
         if (log)
             logPk("open CNT", rdram, pk, "after");
     }
@@ -1028,26 +1028,26 @@ namespace tekken4
         const bool log = g_frames >= 4 && g_pkLogLeft.fetch_sub(1) > 0;
         if (log)
             logPk("close GIF", rdram, pk, "before");
-        sceGifPkCloseGifTag_0x292b28(rdram, ctx, runtime);
+        sceGifPkCloseGifTag_0x291ee8(rdram, ctx, runtime);
         if (log)
             logPk("close GIF", rdram, pk, "after ");
     }
 
-    void vif1EndLogged(uint8_t *r, R5900Context *c, PS2Runtime *p) { logged<FUN_00233430_0x233430>("VIF1 end handler", r, c, p); }
-    void gifEndLogged(uint8_t *r, R5900Context *c, PS2Runtime *p) { logged<FUN_00233548_0x233548>("GIF end handler ", r, c, p); }
-    void frameStartLogged(uint8_t *r, R5900Context *c, PS2Runtime *p) { logged<FUN_00232d20_0x232d20>("frame start     ", r, c, p); }
-    void frameEndLogged(uint8_t *r, R5900Context *c, PS2Runtime *p) { logged<FUN_00233a38_0x233a38>("frame end (+1)  ", r, c, p); }
+    void vif1EndLogged(uint8_t *r, R5900Context *c, PS2Runtime *p) { logged<FUN_00232ab0_0x232ab0>("VIF1 end handler", r, c, p); }
+    void gifEndLogged(uint8_t *r, R5900Context *c, PS2Runtime *p) { logged<FUN_00232bc8_0x232bc8>("GIF end handler ", r, c, p); }
+    void frameStartLogged(uint8_t *r, R5900Context *c, PS2Runtime *p) { logged<FUN_002323a0_0x2323a0>("frame start     ", r, c, p); }
+    void frameEndLogged(uint8_t *r, R5900Context *c, PS2Runtime *p) { logged<FUN_002330b8_0x2330b8>("frame end (+1)  ", r, c, p); }
 
     // Movie pictures. libmpeg's sceMpegGetPicture calls the player's "no data" callback (sceMpegCbNodata,
-    // 0x2281d0) whenever the IPU runs out of bitstream. The callback pumps the disc stream (FUN_00229108), takes the
+    // 0x227888) whenever the IPU runs out of bitstream. The callback pumps the disc stream (FUN_002287a8), takes the
     // previous chunk out of the movie ring and points a toIPU DMA (channel 4, chain mode, one REFE tag at
-    // 0x1ccd2b0) at the next 0x9c00 bytes. The runtime's decoder takes bitstream from sceMpegAddBs or PSS demuxing
+    // 0x1ccab30) at the next 0x9c00 bytes. The runtime's decoder takes bitstream from sceMpegAddBs or PSS demuxing
     // and never calls that callback, so GetPicture waited forever. Here GetPicture first runs the callback the way
     // libmpeg would, hands each transfer it starts to sceMpegAddBs and stops the channel as if the IPU had taken
     // it, until a picture is decoded.
-    constexpr uint32_t kSceMpegGetPicture = 0x0028bb40u;
-    constexpr uint32_t kMovieNodataCallback = 0x002281d0u;
-    constexpr uint32_t kMovieIpuTag = 0x01ccd2b0u;
+    constexpr uint32_t kSceMpegGetPicture = 0x0028af00u;
+    constexpr uint32_t kMovieNodataCallback = 0x00227888u;
+    constexpr uint32_t kMovieIpuTag = 0x01ccab30u;
     constexpr uint32_t kIpuToChcr = 0x1000b400u;
     constexpr int kMaxNodataCalls = 64;
 
@@ -1078,20 +1078,20 @@ namespace tekken4
 
     uint64_t g_movieBytesFed = 0u;
 
-    // Animated IPU images (the character select's background, the attract loop). FUN_002277d0 sets up one job per
-    // image of an image file at 0x1ccd200 (0x54 bytes each: +0x2c/+0x30 size in macroblocks, +0x38 RGB32 output,
+    // Animated IPU images (the character select's background, the attract loop). FUN_00226e88 sets up one job per
+    // image of an image file at 0x1ccaa80 (0x54 bytes each: +0x2c/+0x30 size in macroblocks, +0x38 RGB32 output,
     // +0x3c frame table, +0x40 position, +0x44 frames << 8, +0x48 speed, +0x4c/+0x50 current frame data and size).
-    // Every frame FUN_00227be8(step) advances each animation and has the IPU decode the current frames (FDEC the
-    // flags byte, IDEC through toIPU/fromIPU DMA; the channel-3 handler 0x227cf8 starts the next image), and
-    // FUN_00227eb0 spins until 0x1ccd18c reaches -1. The runtime has no IPU: decode the frames here instead.
-    constexpr uint32_t kIpuImagesDecode = 0x00227be8u;
-    constexpr uint32_t kIpuJobs = 0x01ccd200u;
+    // Every frame FUN_002272a0(step) advances each animation and has the IPU decode the current frames (FDEC the
+    // flags byte, IDEC through toIPU/fromIPU DMA; the channel-3 handler 0x2273b0 starts the next image), and
+    // FUN_00227568 spins until 0x1ccaa0c reaches -1. The runtime has no IPU: decode the frames here instead.
+    constexpr uint32_t kIpuImagesDecode = 0x002272a0u;
+    constexpr uint32_t kIpuJobs = 0x01ccaa80u;
     constexpr uint32_t kIpuJobSize = 0x54u;
-    constexpr uint32_t kIpuActive = 0x01ccd184u;
-    constexpr uint32_t kIpuCount = 0x01ccd188u;
-    constexpr uint32_t kIpuPending = 0x01ccd18cu;
-    constexpr uint32_t kIpuStage = 0x01ccd198u;
-    constexpr uint32_t kIpuFormat = 0x01ccd1acu; // 0 RGB32, 1 RGB16, 2 RGB16 dithered (IDEC OFM/DTE)
+    constexpr uint32_t kIpuActive = 0x01ccaa04u;
+    constexpr uint32_t kIpuCount = 0x01ccaa08u;
+    constexpr uint32_t kIpuPending = 0x01ccaa0cu;
+    constexpr uint32_t kIpuStage = 0x01ccaa18u;
+    constexpr uint32_t kIpuFormat = 0x01ccaa2cu; // 0 RGB32, 1 RGB16, 2 RGB16 dithered (IDEC OFM/DTE)
 
     int32_t guest32(const uint8_t *rdram, uint32_t addr)
     {
@@ -1151,7 +1151,7 @@ namespace tekken4
             }
         }
         setGuest32(rdram, kIpuStage, 0);
-        setGuest32(rdram, kIpuPending, -1); // all decoded: FUN_00227eb0 returns at once
+        setGuest32(rdram, kIpuPending, -1); // all decoded: FUN_00227568 returns at once
     }
 
     void mpegGetPicture(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
@@ -1195,16 +1195,16 @@ namespace tekken4
             std::memcpy(&v, rdram + addr, 4);
             return static_cast<int32_t>(v);
         };
-        const int32_t before = w(0x01ccd2c0u);
-        FUN_00228520_0x228520(rdram, ctx, runtime);
+        const int32_t before = w(0x01ccab40u);
+        FUN_00227bd8_0x227bd8(rdram, ctx, runtime);
         if (before >= 3 && before <= 6 && g_movieLogLeft.fetch_sub(1) > 0)
-            RUNTIME_LOG("[tekken4] movie player state " << before << " -> " << w(0x01ccd2c0u) << ": frame " << w(0x01ccd2d8u)
-                                                       << " shown " << w(0x01ccd364u) << " bufs " << w(0x01ccd3a4u)
-                                                       << " a120 " << w(0x0035a120u) << " end35c " << w(0x01ccd35cu)
-                                                       << " exit358 " << w(0x01ccd358u) << " pad " << std::hex
-                                                       << w(0x00358754u) << std::dec << " skipflag " << w(0x00359f68u)
-                                                       << " mode2c4 " << w(0x01ccd2c4u) << " wait38c " << w(0x01ccd38cu)
-                                                       << " buffered " << w(0x01ccd3d8u) << "\n");
+            RUNTIME_LOG("[tekken4] movie player state " << before << " -> " << w(0x01ccab40u) << ": frame " << w(0x01ccab58u)
+                                                       << " shown " << w(0x01ccabe4u) << " bufs " << w(0x01ccac24u)
+                                                       << " a120 " << w(0x00357a20u) << " end35c " << w(0x01ccabdcu)
+                                                       << " exit358 " << w(0x01ccabd8u) << " pad " << std::hex
+                                                       << w(0x00356054u) << std::dec << " skipflag " << w(0x00357868u)
+                                                       << " mode2c4 " << w(0x01ccab44u) << " wait38c " << w(0x01ccac0cu)
+                                                       << " buffered " << w(0x01ccac58u) << "\n");
     }
 
     void apply(PS2Runtime &runtime)
@@ -1236,11 +1236,11 @@ namespace tekken4
             setenv("TEKKEN4_SOUND_WAV", absolute.c_str(), 1);
 #endif
         }
-        runtime.registerFunction(0x00292900u, closeDmaTag);
-        // The VIF1 packet builder's close (same code, other copy): FUN_002344e0's texture-flush CNT came out qwc 4
+        runtime.registerFunction(0x00291cc0u, closeDmaTag);
+        // The VIF1 packet builder's close (same code, other copy): FUN_00233b60's texture-flush CNT came out qwc 4
         // instead of 2, VIF1 then read the next REF tags as data and the fight stalled ~4 s in (found by Grok, task
         // cnt-qwc).
-        runtime.registerFunction(0x00292c18u, closeDmaTag);
+        runtime.registerFunction(0x00291fd8u, closeDmaTag);
         runtime.registerFunction(kSceMpegGetPicture, mpegGetPicture);
         runtime.registerFunction(kIpuImagesDecode, ipuImagesDecode);
         runtime.registerFunction(kRand, guestRand);
@@ -1291,22 +1291,22 @@ namespace tekken4
         if (const char *movieLog = std::getenv("TEKKEN4_MOVIE_LOG"))
         {
             g_movieLogLeft = std::atoi(movieLog);
-            runtime.registerFunction(0x00228520u, moviePlayerLogged);
+            runtime.registerFunction(0x00227bd8u, moviePlayerLogged);
         }
         if (const char *irqLog = std::getenv("TEKKEN4_IRQ_LOG"))
         {
             g_irqLogLeft = std::atoi(irqLog);
-            runtime.registerFunction(0x00233430u, vif1EndLogged);
-            runtime.registerFunction(0x00233548u, gifEndLogged);
-            runtime.registerFunction(0x00232d20u, frameStartLogged);
-            runtime.registerFunction(0x00233a38u, frameEndLogged);
-            runtime.registerFunction(0x00292900u, closeTagLogged);
-            runtime.registerFunction(0x00292970u, openCntLogged);
-            runtime.registerFunction(0x00292b28u, closeGifLogged);
+            runtime.registerFunction(0x00232ab0u, vif1EndLogged);
+            runtime.registerFunction(0x00232bc8u, gifEndLogged);
+            runtime.registerFunction(0x002323a0u, frameStartLogged);
+            runtime.registerFunction(0x002330b8u, frameEndLogged);
+            runtime.registerFunction(0x00291cc0u, closeTagLogged);
+            runtime.registerFunction(0x00291d30u, openCntLogged);
+            runtime.registerFunction(0x00291ee8u, closeGifLogged);
         }
         if (const char *watch = std::getenv("TEKKEN4_WATCH_MS"))
         {
-            // Debug aid for stalls: after the delay, log the MFIFO ring state (struct from FUN_00232c20:
+            // Debug aid for stalls: after the delay, log the MFIFO ring state (struct from FUN_002322a0:
             // [0] pending paths, [1] active, [2] VIF1 ends, [3] GIF ends, [4] pending count, [8..] saved MADRs).
             const unsigned long delayMs = std::strtoul(watch, nullptr, 10);
             uint8_t *rdram = runtime.memory().getRDRAM();
@@ -1319,7 +1319,7 @@ namespace tekken4
                     for (uint32_t off = 0; off < 0x18; off += 4)
                     {
                         uint32_t w = 0;
-                        std::memcpy(&w, rdram + 0x1cda2c0u + off, 4);
+                        std::memcpy(&w, rdram + 0x1cd7b40u + off, 4);
                         s << " " << std::setw(8) << std::setfill('0') << w;
                     }
                     uint32_t done = 0;
@@ -1376,4 +1376,4 @@ namespace tekken4
     }
 }
 
-PS2_REGISTER_GAME_OVERRIDE("Tekken 4 (SCES-50878 v2.00)", "SCES_508.78", 0x00180088u, 0xBEFFF97Au, tekken4::apply)
+PS2_REGISTER_GAME_OVERRIDE("Tekken 4 (SLUS-20328 v1.00)", "SLUS_203.28", 0x00180088u, 0xB975F704u, tekken4::apply)

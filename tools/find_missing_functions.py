@@ -22,7 +22,7 @@ import csv
 import struct
 import sys
 
-ELF = "game/disc/SCES_508.78"
+ELF = "game/disc/SLUS_203.28"
 MAP_CSV = "config/ghidra_functions_only.csv"
 EXTRA_CSV = "config/extra_functions.csv"
 DATA_SECTIONS = (".data", ".rodata", ".sdata")

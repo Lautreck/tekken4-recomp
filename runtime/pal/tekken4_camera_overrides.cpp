@@ -866,5 +866,5 @@ namespace tekken4_camera
     }
 }
 
-PS2_REGISTER_GAME_OVERRIDE("Tekken 4 camera log (SCES-50878 v2.00)", "SCES_508.78", 0x00180088u, 0xBEFFF97Au,
+PS2_REGISTER_GAME_OVERRIDE("Tekken 4 camera log (SLUS-20328 v1.00)", "SLUS_203.28", 0x00180088u, 0xB975F704u,
                            tekken4_camera::apply)

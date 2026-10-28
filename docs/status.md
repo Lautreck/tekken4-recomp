@@ -53,7 +53,26 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Next goals, in order: (1) sound: clipping (movie PCM added after the SPU clamp) and the char-select silence
   (driver stops issuing libsd/cdvd calls after a 3.26 s one-shot); (2) fps toward 60 (GS ~700 ms/s, game thread
   ~13-18 ms/frame); (3) a CD-completion-callback case for the idle-skip test.
-- **GL FIGHT AT 60 FPS (2026-10-28, session 6), RESTART HERE.** Patch 25 (fork gs-gl ee03022,
+- **GL STAGE FIXED (2026-10-28, session 6), RESTART HERE.** Patch 26 (fork gs-gl, `patches/26-ps2xRuntime-gs-gl-stage-textures.patch`):
+  the GL fight now shows the textured stage (mall, palm trees, "AQUA GARDEN" sign, lit shops) like the CPU renderer,
+  without its white speckles, still a steady 60 fps (logs\gl_stage3\frame_60s/90s.png). Cause: every stage texture
+  (T4/T8 pages at blocks 0x2440-0x3300) was sampled through findReinterpretSource from render target fbp 290 (a
+  640x448 CT32 target of the menus whose memory the stage textures were later uploaded into). uploadedSinceDraw
+  could not see those uploads: the upload log keeps the last 2048-4096 records and the per-frame character uploads
+  had pushed the stage-load ones out. Now each target keeps the writeSeq of the last upload into each of its blocks
+  (RenderTarget::blockUploadSeq, filled in BeginTransfer), which never forgets. Also in patch 26: GS CLAMP region
+  modes in the shader (REGION_CLAMP / REGION_REPEAT with MINU/MAXU/MINV/MAXV, like gs_cpu_backend's
+  wrapTextureCoordinate; the stage atlases use them on ~95% of draws; GoW treated them as clamp), and debug output
+  under GOW_GS_HW_STATS / GOW_GS_HW_DUMP: "[gs-hw] reinterpret tbp=.. from fbp=.." (first sighting of each pair),
+  "[gs-hw-dump-tex]" (CLAMP, TEX1, texel range per batch), GOW_GS_HW_RTDUMPSTEP=<n> (every n-th batch of the RT dump).
+  Tools: scratchpad-style ppm->png converter not in git (bmp_to_png.py handles BMP only).
+  PCSX2: the user's 1.6 on E: (GSdx D3D11) runs the game; PrintWindow(PW_RENDERFULLCONTENT) captures its window
+  read-only, but its LilyPad pad ignores our posted keys, so the user drives it. The portable 2.8.2 in
+  external\pcsx2 was lost in the 2026-10-22 wipe.
+  **Next, in order:** (1) check menus / character select / intro movie with GL after patch 26 (the movie was black;
+  the same uploadedSinceDraw bug may have caused it); (2) PCSX2 side by side of the fight; (3) make GL the default in
+  run_capture/run_game; (4) sound only if it crashes (user, 2026-10-28).
+- **GL FIGHT AT 60 FPS (2026-10-28, session 6).** Patch 25 (fork gs-gl ee03022,
   `patches/25-ps2xRuntime-gs-gl-clut-batching.patch`): with PS2X_GS_BACKEND=gl the fight runs a **steady 60 fps at full
   game speed** (in-game clock 30 s per 30 real s; logs\gl_why2, fight sec 51-103 all 60, GS ~130 ms/s on the game
   thread; was ~35 fps / ~0.6x). Cause found with the new GOW_GS_HW_STATS "batch ends" line (why each GL batch ended,

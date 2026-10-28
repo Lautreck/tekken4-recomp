@@ -53,7 +53,22 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Next goals, in order: (1) sound: clipping (movie PCM added after the SPU clamp) and the char-select silence
   (driver stops issuing libsd/cdvd calls after a 3.26 s one-shot); (2) fps toward 60 (GS ~700 ms/s, game thread
   ~13-18 ms/frame); (3) a CD-completion-callback case for the idle-skip test.
-- **GL IS THE DEFAULT RENDERER (2026-10-28, session 6), RESTART HERE.** tools\run_game.cmd and tools\run_capture.ps1
+- **PCSX2 BACK + NAME PLATES (2026-10-28, session 6), RESTART HERE.** PCSX2 2.8.2 portable re-installed in external\pcsx2
+  (official GitHub release asset pcsx2-v2.8.2-windows-x64-Qt.7z, sha256 7dfc829c...b4 checked; download kept in
+  external\pcsx2_download). Config written by hand: portable.ini + inis\PCSX2.ini (BIOS folder E:\God Hand + Emulator\bios,
+  SCPH-70004_BIOS_V12_PAL_200.BIN, used in place, not copied; PINE slot 28011; fast boot; 1x; keyboard pad 1:
+  arrows, Return = Start, X = Cross, Z = Circle, C = Square, V = Triangle). tools\pcsx2_capture.ps1 drives it again;
+  the game text is German (BIOS language), irrelevant for pictures. PCSX2 keys = ours + 2 s:
+  12:Down,14:Cross,17:Left,18.5:Cross,32:Start,38:Cross,42:Down,43.5:Cross,48:Cross -> fight (logs\pcsx2_fight1:
+  Kazuya vs Christie, airport stage; arcade opponents are random, so stages differ between runs). The user's PCSX2
+  1.6 on E: has pad bindings only for an XInput controller (no keyboard), so neither of us can drive it.
+  **Patch 28** (fork gs-gl f4220d3): GL fight name plates. Both plates are drawn from one area (0x3b60, rows 0-17,
+  re-uploaded per name); the partial row re-decode (patch 23) kept the hash of the last full decode (patch 24), so
+  after the next invalidation the texture was revalidated holding the other name: player 1 showed "LAW" instead of
+  "KAZUYA" in every GL fight. The hash is now refreshed after a row re-decode (logs\gl_names2: KAZUYA vs LAW).
+  Found by comparing with PCSX2/CPU frames. **Next:** more side-by-side checks against PCSX2 (other stages via the
+  attract demo or later arcade stages), then a longer play session by the user.
+- **GL IS THE DEFAULT RENDERER (2026-10-28, session 6).** tools\run_game.cmd and tools\run_capture.ps1
   now set PS2X_GS_BACKEND=gl unless it is already set (PS2X_GS_BACKEND=cpu = the software renderer). Full pass with GL
   (logs\gl_full1\contact.png, standard fight keys): PAL60 dialog, namco logo, **intro movie**, difficulty, mode select,
   character select, fight with the textured stage, **fight 60 fps** (43 of 44 s at 60). ps2x_tests 482/482.

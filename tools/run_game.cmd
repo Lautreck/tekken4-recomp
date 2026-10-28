@@ -16,5 +16,8 @@ if not defined PS2X_GS_THREADS set "PS2X_GS_THREADS=auto"
 rem Real game sound by default since 2026-10-28 (user's choice; experimental: some crackling, ~20 s of silence at
 rem character select; needs the game ISO in the project root or TEKKEN4_ISO). Set TEKKEN4_SOUND=0 for the silent stand-in.
 if not defined TEKKEN4_SOUND set "TEKKEN4_SOUND=1"
+rem The window title says whose game it is (Grok/Claude test runs title theirs): TEKKEN4_WINDOW_TITLE overrides it.
+if not defined TEKKEN4_WINDOW_TITLE set "TEKKEN4_WINDOW_TITLE=TEKKEN 4 - YOUR GAME"
+start "" /b powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0set_window_title.ps1" -Title "%TEKKEN4_WINDOW_TITLE%"
 "%EXE%" "%ROOT%\game\disc\SCES_508.78" > "%ROOT%\logs\run.log" 2>&1
 echo exit code %errorlevel%, log in logs\run.log

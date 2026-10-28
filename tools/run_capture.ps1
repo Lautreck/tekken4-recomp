@@ -22,8 +22,14 @@ public static class RunCaptureWin {
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool SetWindowText(IntPtr h, string s);
 }
 "@
+# Window title names the run (user, 2026-10-28): "TEKKEN 4 - Grok: <run>" / "TEKKEN 4 - Claude: <run>", or
+# TEKKEN4_WINDOW_TITLE when set. Re-applied at every event.
+$runLabel = Split-Path -Leaf $RunDir
+$windowTitle = if ($env:TEKKEN4_WINDOW_TITLE) { $env:TEKKEN4_WINDOW_TITLE }
+               elseif ($RunDir -match '(^|[\\/])logs[\\/]grok[\\/]') { "TEKKEN 4 - Grok: $runLabel" } else { "TEKKEN 4 - Claude: $runLabel" }
 # Posted key messages reach the GLFW window without a focus change (lParam: repeat 1, scancode, extended flag).
 function Send-Key([IntPtr]$h, [int]$vkCode, [int]$scanCode, [bool]$extended, [int]$holdMs) {
     $flags = [int64]1 -bor ([int64]$scanCode -shl 16)
@@ -58,11 +64,15 @@ $p = Start-Process -FilePath $exe -ArgumentList "`"$elf`"" -WorkingDirectory $Ru
     -RedirectStandardOutput "$RunDir\stdout.txt" -RedirectStandardError "$RunDir\stderr.txt" -PassThru
 $t0 = Get-Date
 while (((Get-Date) - $t0).TotalSeconds -lt 3 -and -not $p.HasExited) { Start-Sleep -Milliseconds 250 }
-$p.Refresh(); if ($p.MainWindowHandle -ne [IntPtr]::Zero) { Send-Key $p.MainWindowHandle 0x70 0x3B $false 100 }
+$p.Refresh(); if ($p.MainWindowHandle -ne [IntPtr]::Zero) {
+    [void][RunCaptureWin]::SetWindowText($p.MainWindowHandle, $windowTitle)
+    Send-Key $p.MainWindowHandle 0x70 0x3B $false 100
+}
 foreach ($e in $events) {
     while (((Get-Date) - $t0).TotalSeconds -lt $e.t -and -not $p.HasExited) { Start-Sleep -Milliseconds 100 }
     if ($p.HasExited) { "exited early after {0:N1} s" -f ((Get-Date) - $t0).TotalSeconds; break }
     $p.Refresh(); $h = $p.MainWindowHandle
+    if ($h -ne [IntPtr]::Zero) { [void][RunCaptureWin]::SetWindowText($h, $windowTitle) }
     if ($e.kind -eq "key") {
         if (-not $vk.ContainsKey($e.key)) { "unknown key $($e.key)"; continue }
         Send-Key $h $vk[$e.key] $scan[$e.key] $false 250

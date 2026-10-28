@@ -62,6 +62,10 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Review per task: results logs\grok\<task>_<time>.json + <task>-notes.md; diff = tools\grok_tree.ps1 -Task <t>
   -Diff -> logs\grok\<t>-tree.patch; check the numbers, commit into the fork (author Pablo), export patch NN, push.
   Deferred until music lands (same files): moving the IOP/SPU mixing off the game thread (fps headroom).
+  Also to do once test-mode is done (it runs Claude's out\runtime build): Escape quits the game (raylib's default
+  exit key; the user hit it 3x by mistake) -> SetExitKey(KEY_NULL) after InitWindow, only the window X closes it.
+  The user plays to show the fixed-fight menu path: scratchpad user_play.ps1 holds the run lock, frame_<s>.bmp
+  every second into logs\user_path<n>.
 - **SOUND PLAYBACK FIXED + FPS WITH SOUND (2026-10-28, session 6).** User: "sound is much better
   now!". Cause of the choppy sound: raylib's UpdateAudioStream pads every write up to the stream sub-buffer
   (48000/30 = 1600 frames) with silence; we wrote 1024-frame pieces = ~36 % silence in 12 ms gaps, and the queue

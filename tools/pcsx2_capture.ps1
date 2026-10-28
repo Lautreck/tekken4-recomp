@@ -30,6 +30,7 @@ public static class Pcsx2CaptureWin {
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumProc f, IntPtr l);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool SetWindowText(IntPtr h, string s);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
@@ -78,6 +79,10 @@ function Get-GsWindow($proc) {
     return $best
 }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
+# Window title names the run (user, 2026-10-28): "PCSX2 - Grok: <run>" / "PCSX2 - Claude: <run>"; re-applied at
+# every event since PCSX2 sets its own title.
+$runLabel = Split-Path -Leaf $OutDir
+$windowTitle = if ($OutDir -match '(^|[\\/])logs[\\/]grok[\\/]') { "PCSX2 - Grok: $runLabel" } else { "PCSX2 - Claude: $runLabel" }
 . (Join-Path $PSScriptRoot "run_lock.ps1")
 Enter-RunLock $root "pcsx2_capture $OutDir"
 $events = @($Shots | ForEach-Object { [pscustomobject]@{ t = [double]$_; kind = "shot"; key = "" } })
@@ -92,6 +97,7 @@ foreach ($e in $events) {
     if ($p.HasExited) { "PCSX2 exited after {0:N1} s" -f ((Get-Date) - $t0).TotalSeconds; break }
     $w = Get-GsWindow $p
     if (-not $w) { "no window at $($e.t) s"; continue }
+    [void][Pcsx2CaptureWin]::SetWindowText($w.h, $windowTitle)
     if ($e.kind -eq "key") {
         if (-not $vk.ContainsKey($e.key)) { "unknown key $($e.key)"; continue }
         # Posted key messages don't reach LilyPad here, so send a real key press with PCSX2 briefly in front.

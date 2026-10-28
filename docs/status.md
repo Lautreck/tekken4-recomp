@@ -62,6 +62,16 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Sound: on by default in tools\run_game.cmd (TEKKEN4_SOUND=1, user's choice 2026-10-28; =0 for the silent
   stand-in). tools\run_capture.ps1 stays silent until one capture with sound is checked against the standard
   fight key path (timing, fps with GL, no crash); the last sound run (2026-10-27, CPU renderer) reached the fight.
+  **User report with sound on:** intro movie audio "super flickery", much of it missing, unintelligible, voices
+  not heard; Story Battle character select: the narrator's voice line plays. Matches the open items (movie PCM
+  after the SPU clamp; WAV shorter than wall clock = fewer samples than real time -> gaps). Not worked on yet.
+  **FREEZE after winning a Story Battle fight (fixed in the map, build pending):** logs\playtest4_story_freeze.log
+  ends with [guest-branch:missing-target] DirectJump 0x268c30. FUN_00268bf8 is a switch on a1 (1..5 via the jump
+  table at 0x32f350 -> 0x268c20/0x268c28); its default case 0x268c30 (return 0) had no function entry. The
+  finder ignored branches leaving a function: tools\find_missing_functions.py --escapes now seeds them
+  (map = --data-pointers --escapes --write). It adds exactly 2: FUN_00268c30 and FUN_002914d8 (libmpeg tail-jump
+  target of _dispRefImage/_dispRefImageField, a latent movie freeze). No branch lands mid-function.
+  function_map.csv merged by hand (same merge as postprocess_ghidra_export.py, which needs Ghidra running).
 - **PCSX2 COMPARISONS + GUEST RAND (2026-10-28, session 6), RESTART HERE.** Our CPU opponents never varied (arcade
   always Law, story always Steve, at any key timing) while PCSX2 picked Christie, Marduk, Paul. Cause: the recompiler
   maps the game's libc rand (0x2a3178) by name to the runtime stub (host std::rand), but the game's srand

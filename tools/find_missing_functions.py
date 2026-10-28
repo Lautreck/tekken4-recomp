@@ -9,6 +9,8 @@ Seeds:
   [count, ptr * count, 0]; FUN_0029b1f0 (__do_global_ctors) walks the ctor list backwards.
 - With --data-pointers: aligned words in .data/.rodata/.sdata that point into .text at an address
   no known function covers (vtables, callback tables).
+- With --escapes: branch/jump targets that leave a function (known or new) into .text no function covers,
+  e.g. a switch's default case past its case labels. Current map: --data-pointers --escapes --write.
 
 Each seed is traced through its branches to find where it ends; calls to unknown addresses become
 new seeds. Function bounds stop at the next known function start, so a seed can't swallow a neighbour.
@@ -110,8 +112,12 @@ def branch_info(w, pc):
 
 
 def trace(img, start, limit):
-    """Walks one function from start. Returns (end, call_targets, problems)."""
-    seen, todo, calls, problems = set(), [start], set(), []
+    """Walks one function from start. Returns (end, call_targets, escapes, problems).
+
+    escapes = branch/jump targets outside [start, limit). The recompiled code reaches them through the
+    function table, so each one must be a function start (a switch's default case past its last case label
+    froze the game after a Story Battle win: 0x268bf8 -> 0x268c30)."""
+    seen, todo, calls, escapes, problems = set(), [start], set(), set(), []
     while todo:
         pc = todo.pop()
         while pc not in seen:
@@ -135,15 +141,20 @@ def trace(img, start, limit):
             elif kind == "branch":
                 if start <= target < limit:
                     todo.append(target)
+                else:
+                    escapes.add(target)
                 pc += 8
             elif kind == "always" or (kind == "jump" and start <= target < limit):
                 if start <= target < limit:
                     pc = target
                 else:
+                    escapes.add(target)
                     break                         # tail call
             else:                                 # return, indirect jump, tail call
+                if kind == "jump":
+                    escapes.add(target)
                 break
-    return max(seen) + 4, calls, problems
+    return max(seen) + 4, calls, escapes, problems
 
 
 def data_pointer_seeds(img, starts, bodies):
@@ -166,6 +177,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--write", action="store_true", help=f"write {EXTRA_CSV}")
     ap.add_argument("--data-pointers", action="store_true", help="also seed from pointers into uncovered .text")
+    ap.add_argument("--escapes", action="store_true",
+                    help="also seed from branch/jump targets that leave a known function into uncovered .text")
     args = ap.parse_args()
 
     img = Image(load_elf(ELF))
@@ -187,6 +200,25 @@ def main():
         for p in sorted(extra):
             seeds.setdefault(p, f"FUN_{p:08x}")
 
+    def inside_known(addr):
+        j = bisect.bisect_right(bodies, (addr, 0xFFFFFFFF)) - 1
+        return bodies[j][0] if j >= 0 and bodies[j][0] < addr < bodies[j][1] else None
+
+    if args.escapes:
+        escaped = set()
+        for _, s, e in known:
+            for t in trace(img, s, e)[2]:
+                if not img.in_text(t) or t in starts:
+                    continue
+                owner = inside_known(t)
+                if owner is not None:
+                    print(f"  note 0x{s:08x}: branches to 0x{t:08x}, inside known function at 0x{owner:08x}")
+                    continue
+                escaped.add(t)
+        print(f"branch targets leaving known functions into uncovered .text: {len(escaped)}")
+        for p in sorted(escaped):
+            seeds.setdefault(p, f"FUN_{p:08x}")
+
     found, todo = {}, sorted(seeds)
     while todo:
         start = todo.pop()
@@ -195,15 +227,15 @@ def main():
         nxt = sorted(starts | set(found) | set(seeds) | set(todo))
         k = bisect.bisect_right(nxt, start)
         limit = min(nxt[k] if k < len(nxt) else img.text_hi, img.text_hi)
-        end, calls, problems = trace(img, start, limit)
+        end, calls, escapes, problems = trace(img, start, limit)
         found[start] = (seeds.get(start, f"FUN_{start:08x}"), end)
         for p in problems:
             print(f"  warning 0x{start:08x}: {p}")
-        for c in calls:
+        for c in calls | (escapes if args.escapes else set()):
             if img.in_text(c) and c not in starts and c not in found:
-                j = bisect.bisect_right(bodies, (c, 0xFFFFFFFF)) - 1
-                if j >= 0 and bodies[j][0] < c < bodies[j][1]:
-                    print(f"  note 0x{start:08x}: calls 0x{c:08x}, inside known function at 0x{bodies[j][0]:08x}")
+                owner = inside_known(c)
+                if owner is not None:
+                    print(f"  note 0x{start:08x}: reaches 0x{c:08x}, inside known function at 0x{owner:08x}")
                     continue
                 todo.append(c)
 

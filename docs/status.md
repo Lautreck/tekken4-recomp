@@ -56,6 +56,11 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
 - **NEXT SESSION STARTS HERE (saved 2026-10-28 22:25, Claude at 74 % usage; user: "stop here, Grok works on
   its own until the usage reset at 12 am").** Running detached: Grok **arena-perf** (tree wt-arena-perf), **music-3**
   (wt-music, 300 turns), **hud** (wt-hud); **tools\grok_chain.ps1** (pid 81124, log logs\grok\chain-stage-sweep.log)
+  UPDATE 22:45: **hud finished** (logs/grok/hud-final.json, conf 0.86: GAME/HOST/INPUT counters top-left, F3,
+  fps unchanged; review + merge); **music-3 finished: hypothesis refuted** (conf 0.88; the zsiopdrv sifcmd handler
+  cid 0 only stores a size at 0x52200; the first 10240 B stream block is filled, the refills are not; next lead:
+  which IOP code refills 0xc7000 after 0x49620 consumes it; look at the EE send at 0x2296ac; no music task queued);
+  arena-perf was at step 139/150 (may end without a result).
   starts Grok **stage-sweep** (docs/ai/prompts/stage-sweep.md: each stage 30 s in Practice, sound on, fps table +
   profile of unstable stages; measures only) when those three have finished. TO DO next session, in order:
   (1) `powershell -File tools\grok_list.ps1`; read logs\grok\<task>_<time>.json + <task>-notes.md for each;

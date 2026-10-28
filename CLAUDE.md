@@ -14,7 +14,9 @@ Static recompilation of Tekken 4 (PS2) to a native Windows executable using PS2R
 ## Layout
 - `game/` - files extracted from the disc (gitignored, never commit)
 - `ghidra/` - Ghidra project (gitignored; contains game code)
-- `external/PS2Recomp` - toolchain (ran-j/PS2Recomp), gitignored, commit pinned in docs/status.md
+- `../tekken4-fork-ps2recomp` (H:\tekken4-fork-ps2recomp) - DEFAULT PS2Recomp tree of all build/run scripts since 2026-10-28
+  (user's choice): branch = pinned upstream commit + patches/*.patch committed one by one; `TEKKEN4_SRC` overrides.
+- `external/PS2Recomp` - old toolchain tree (ran-j/PS2Recomp), gitignored; holds Grok's uncommitted WIP, kept, not built
 - `external/God-Of-War-Native-Port` - reference port (GS/VU1/IOP/sound solutions to study)
 - `external/ghidra_12.1.4_PUBLIC` - Ghidra (needs JDK 21) with `ghidra-emotionengine-reloaded` v2.1.38 and
   GhidraMCP 2.0 in `Ghidra/Extensions`. GhidraMCP serves on http://127.0.0.1:8080/ only while a CodeBrowser
@@ -37,6 +39,6 @@ Static recompilation of Tekken 4 (PS2) to a native Windows executable using PS2R
 - Run Python on anything under `game/` with `python -I`.
 - Push after every commit (private remote Lautreck/tekken4-recomp): git is the only copy of tools/docs/config/patches/runtime. 
   NOBODY deletes (Claude, subagents, Grok): user rule 2026-10-27, only the user removes files, each step authorised by them. Deny rules in tools/grok_task.ps1 and ~/.claude/settings.json.
-  tools/backup_local.ps1 copies ghidra/, logs/, external/PS2Recomp to ~/tekken4-backup (run by grok_start.ps1).
+  tools/backup_local.ps1 copies ghidra/, logs/, external/PS2Recomp and the fork tree (+ its git bundle) to ~/tekken4-backup (run by grok_start.ps1).
 
 - Clearing away (user, 2026-10-28): only `powershell -File tools\to_clean.ps1 -Path <item>` = MOVE into `to clean\` (gitignored, logged in logs\to_clean.log), never delete; the user inspects it.

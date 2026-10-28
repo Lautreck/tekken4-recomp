@@ -1,6 +1,6 @@
 @echo off
 rem Builds PS2Recomp's ps2EntryRunner (RelWithDebInfo) with MSVC + Ninja. Run tools\stage_generated.cmd first.
-rem Output: external\PS2Recomp\out\runtime\ps2xRuntime\ps2EntryRunner.exe, or out\<TEKKEN4_BUILD_DIR> when that is set
+rem Output: <tree>\out\runtime\ps2xRuntime\ps2EntryRunner.exe, or out\<TEKKEN4_BUILD_DIR> when that is set
 rem (Grok builds in out\grok so its builds and Claude's never overwrite each other; run_capture / run_game follow it).
 rem Logs: per-function trace (AGRESSIVE_LOGS) off, it is what slowed the GoW port down; console runtime
 rem logs and the IOP RPC trace stay on while we chase boot problems. Changing any of these rebuilds everything.
@@ -10,8 +10,9 @@ if not defined VSDIR (echo MSVC not found & exit /b 1)
 call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" >nul
 if errorlevel 1 exit /b 1
 set "PATH=%ProgramFiles%\CMake\bin;%LOCALAPPDATA%\Microsoft\WinGet\Links;%PATH%"
-rem TEKKEN4_SRC=<PS2Recomp tree> builds another checkout (e.g. a clean worktree with only the committed patches).
-if defined TEKKEN4_SRC (set "SRC=%TEKKEN4_SRC%") else set "SRC=%~dp0..\external\PS2Recomp"
+rem Default PS2Recomp tree: the fork clone ..\tekken4-fork-ps2recomp (user, 2026-10-28: the only tree that holds
+rem exactly the committed patches; external\PS2Recomp keeps Grok's uncommitted WIP). TEKKEN4_SRC=<tree> overrides it.
+if defined TEKKEN4_SRC (set "SRC=%TEKKEN4_SRC%") else set "SRC=%~dp0..\..\tekken4-fork-ps2recomp"
 if not defined TEKKEN4_BUILD_DIR set "TEKKEN4_BUILD_DIR=runtime"
 set "BUILD=%SRC%\out\%TEKKEN4_BUILD_DIR%"
 rem A Grok build is CPU-heavy side work: it waits while a timed game / PCSX2 run holds logs\run.lock

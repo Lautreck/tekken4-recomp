@@ -46,10 +46,11 @@ You need Visual Studio 2022 Build Tools (C++), CMake, Ninja, Git and Python 3. G
 [ghidra-emotionengine-reloaded](https://github.com/chaoticgd/ghidra-emotionengine-reloaded)) is only needed to
 redo the function map.
 
-1. Clone PS2Recomp into `external/PS2Recomp` at the commit pinned in `docs/status.md`.
+1. Clone PS2Recomp next to this folder as `../tekken4-fork-ps2recomp` (the default tree of every script; `TEKKEN4_SRC`
+   points them at another one) at the commit pinned in `docs/status.md`.
 2. Copy the files from your disc into `game/disc/` (the ELF is `SCES_508.78`).
 3. `tools\build_ps2recomp_tools.cmd` builds the recompiler.
-4. `external\PS2Recomp\out\tools\ps2xRecomp\ps2_recomp.exe config\ghidra_export.toml` writes `generated/`.
+4. `..\tekken4-fork-ps2recomp\out\tools\ps2xRecomp\ps2_recomp.exe config\ghidra_export.toml` writes `generated/`.
 5. `tools\stage_generated.cmd` copies the generated code and our overrides into the runtime.
 6. `tools\build_runtime.cmd` applies `patches\*.patch` and builds `ps2EntryRunner.exe`.
 7. `tools\run_game.cmd` runs it (F1 toggles the runtime's debug panel; the output goes to `logs\run.log`).

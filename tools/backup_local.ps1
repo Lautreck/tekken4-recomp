@@ -13,7 +13,9 @@ $src = @(
     @{ From = "ghidra"; To = "ghidra"; Xd = @() },
     @{ From = "game\vu1"; To = "game\vu1"; Xd = @() },  # captured VU1 micro memory: lost once, the fight dropped to 12 fps
     @{ From = "logs"; To = "logs"; Xd = @() },
-    @{ From = "external\PS2Recomp"; To = "external\PS2Recomp"; Xd = @("out", "build", ".vs") }
+    @{ From = "external\PS2Recomp"; To = "external\PS2Recomp"; Xd = @("out", "build", ".vs") },
+    # Default build tree since 2026-10-28 (sibling clone, branches = committed patch stack, local-only commits)
+    @{ From = "..\tekken4-fork-ps2recomp"; To = "fork-ps2recomp"; Xd = @("out", "build", ".vs") }
 )
 foreach ($s in $src) {
     $from = Join-Path $root $s.From
@@ -23,5 +25,7 @@ foreach ($s in $src) {
     robocopy @args | Out-Null
 }
 git -C $root bundle create (Join-Path $dst "repo.bundle") --all 2>$null | Out-Null
+$fork = Join-Path (Split-Path -Parent $root) "tekken4-fork-ps2recomp"
+if (Test-Path (Join-Path $fork ".git")) { git -C $fork bundle create (Join-Path $dst "fork-ps2recomp.bundle") --all 2>$null | Out-Null }
 Set-Content $stamp (Get-Date -Format s)
 "backup done -> $dst"

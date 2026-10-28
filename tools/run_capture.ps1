@@ -41,7 +41,7 @@ New-Item -ItemType Directory -Force $RunDir | Out-Null
 . (Join-Path $PSScriptRoot "run_lock.ps1")
 Enter-RunLock $root "run_capture $RunDir"
 $buildDir = if ($env:TEKKEN4_BUILD_DIR) { $env:TEKKEN4_BUILD_DIR } else { "runtime" }  # Grok: out\grok
-$srcTree = if ($env:TEKKEN4_SRC) { $env:TEKKEN4_SRC } else { Join-Path $root "external\PS2Recomp" }  # see build_runtime.cmd
+$srcTree = if ($env:TEKKEN4_SRC) { $env:TEKKEN4_SRC } else { Join-Path (Split-Path -Parent $root) "tekken4-fork-ps2recomp" }  # see build_runtime.cmd
 $exe = Join-Path $srcTree "out\$buildDir\ps2xRuntime\ps2EntryRunner.exe"
 $elf = Join-Path $root "game\disc\SCES_508.78"
 # Draw on several threads like tools\run_game.cmd (set PS2X_GS_THREADS=0 beforehand to draw on one).

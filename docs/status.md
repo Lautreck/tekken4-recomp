@@ -53,6 +53,16 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Next goals, in order: (1) sound: clipping (movie PCM added after the SPU clamp) and the char-select silence
   (driver stops issuing libsd/cdvd calls after a 3.26 s one-shot); (2) fps toward 60 (GS ~700 ms/s, game thread
   ~13-18 ms/frame); (3) a CD-completion-callback case for the idle-skip test.
+- **Playability check (2026-10-28, user: make the game playable, sound only if it crashes):** default build tree is now
+  the fork clone (commit 80512fe). Stability (logs\stability1, 430 s, usual keys then hands off): no crash, no error
+  line; fight -> CPU wins -> game over -> attract (Greatest Survivors at 390 s). **Game speed is frame-locked:** the
+  in-game clock went 00:01.93 (70 s) -> 01:06.56 (230 s) = 65 game s in 160 wall s (~0.4x) at 25-31 fps, so the
+  fight plays at under half speed until it renders 60 fps. Fight game thread (Grok stackprof iop-sched-2-after):
+  ~37% waiting for GS drawing threads (LoadClut ~20%, Submit page conflicts ~16%), texture uploads ~11%
+  (writeImageTransfer<PSMT8>), VU1/VIF/IOP <= 2% each. Plan: port the God of War port's OpenGL GS renderer
+  (GSThreadedBackend(GSHwBackend), same GSRasterBackend interface as ours; machine has an RTX 5090 and 8 logical
+  CPUs) behind a switch, CPU renderer stays default until the GL one matches it. GoW repo re-cloned into
+  external\God-Of-War-Native-Port (lost in the wipe).
 - **WAVE 3 MERGED (2026-10-28).** Working copy is H:\tekken4-recomp (F: is never touched). Clean merge done on a fork
   clone H:\tekken4-fork-ps2recomp (branches: wave3-merge = base eb8688b + patches 01-19 + patch 20; wave3 = raw Grok output incl. the
   unfinished iop-sched-2). Tests on the fork: ps2x_tests 481/481. patches/20-ps2xRuntime-gs-review-fixes-and-sound-merge.patch = gs-review-fixes

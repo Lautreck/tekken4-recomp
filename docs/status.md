@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-10-28 22:25 (session 6, end)_
+_Last updated: 2026-10-29 00:50 (session 7)_
 
 ## Resume here
 To continue, open Claude Code in this folder and say: "read docs/status.md and continue".
@@ -53,6 +53,30 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Next goals, in order: (1) sound: clipping (movie PCM added after the SPU clamp) and the char-select silence
   (driver stops issuing libsd/cdvd calls after a 3.26 s one-shot); (2) fps toward 60 (GS ~700 ms/s, game thread
   ~13-18 ms/frame); (3) a CD-completion-callback case for the idle-skip test.
+- **SESSION 7 (2026-10-29, after the usage reset) — CURRENT.**
+  - **stage-sweep done** (logs/grok/stage-sweep-notes.md): Arena is the only unstable stage, 37.27 fps (every second
+    37-38, GS 605 ms, ~1236 state batches/frame); airport, building, mall_a, mall_b, shinjuku, beach, laboratory,
+    parking, underground all 60.0x fps with sound on (GS 74-224 ms).
+  - **HUD merged = patch 33** (fork f00aac4, main b8b12c7): GAME/HOST fps + INPUT/AVG ms top-left, F3, TEKKEN4_HUD=0.
+    Grok's GAME counted vsync ticks (movie read 60); a GS draw-serial heuristic also failed (movie 55-59, menus
+    43-59, logs/hud_claude1). Now the override calls ps2_hud::noteGameFrame() on sound call 0x100 (same frames as
+    TEKKEN4_PERF_LOG): logs/hud_claude3 HUD GAME == perf (movie 30, fight 60). The override include is
+    `__has_include`-guarded because Grok trees on older stacks stage the same file; drop the guard once none do.
+    Default build rebuilt with it. NOTE: build_runtime.cmd does NOT stage runtime/*_overrides.cpp
+    (stage_generated.cmd does); the main-tree override carries Grok music WIP, so the default build got a clean copy
+    (HEAD + HUD) by hand. Fork push: origin of the fork tree is external/PS2Recomp, so `git push origin gs-gl`
+    created branch gs-gl there (additive ref, its detached HEAD/worktree untouched).
+  - User saw the airport fps drop in logs/hud_claude1 (fight s79-98: HOST 43-50 while game frames stayed 60).
+    Not reproduced in hud_claude2/3 (HOST 60). At the time an elevated python (not ours, pid 107332) copied
+    ~230 MB/s (F: 92-97 % busy); suspected disk/IO stall of the present thread (TEKKEN4_HUD_LOG fflush), unproven.
+    Slow loads also shift run_fixed_fight's timed keys (hud_claude3 ended on the difficulty screen).
+  - **Grok running:** **music-4** (docs/ai/prompts/music-4.md, wt-music, 300 turns): music-3 refuted the wrong
+    thing; the SDK copies the sceSifSendCmd extra payload by SIF DMA, and the chain is a handshake (EE cid 0 ->
+    IOP handler 0x4f4f4 -> 0x49620 -> IOP cid 2 reply -> EE clears guard 0x1ccd400). Broken links: RPC.cpp
+    sceSifSendCmd reads dest/size from the stack (EABI: t0/t1) and copies into EE RAM; IOP sifcmd ordinal 10
+    dropped; no IOP->EE user-cmd delivery. **arena-perf-2** (docs/ai/prompts/arena-perf-2.md, wt-arena-perf,
+    300 turns): finish the bindless per-vertex batching; the shader used nonuniformEXT, which NVIDIA GL
+    (RTX 5090) rejects. Review both when they finish (grok_list, logs/grok/<task>_*.json).
 - **NEXT SESSION STARTS HERE (saved 2026-10-28 22:25, Claude at 74 % usage; user: "stop here, Grok works on
   its own until the usage reset at 12 am").** Running detached: Grok **arena-perf** (tree wt-arena-perf), **music-3**
   (wt-music, 300 turns), **hud** (wt-hud); **tools\grok_chain.ps1** (pid 81124, log logs\grok\chain-stage-sweep.log)

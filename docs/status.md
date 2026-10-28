@@ -53,7 +53,28 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Next goals, in order: (1) sound: clipping (movie PCM added after the SPU clamp) and the char-select silence
   (driver stops issuing libsd/cdvd calls after a 3.26 s one-shot); (2) fps toward 60 (GS ~700 ms/s, game thread
   ~13-18 ms/frame); (3) a CD-completion-callback case for the idle-skip test.
-- **USER PLAYTEST + KEYBOARD LAYOUT (2026-10-28, session 6), RESTART HERE.** The user is playing with
+- **SOUND PLAYBACK FIXED + FPS WITH SOUND (2026-10-28, session 6), RESTART HERE.** User: "sound is much better
+  now!". Cause of the choppy sound: raylib's UpdateAudioStream pads every write up to the stream sub-buffer
+  (48000/30 = 1600 frames) with silence; we wrote 1024-frame pieces = ~36 % silence in 12 ms gaps, and the queue
+  fell behind until it dropped whole seconds (the WAV was written before that step, so it never showed). **Patch 30**
+  (fork 7108444): DeviceQueue, filled by the game thread, drained by raylib's audio thread (SetAudioStreamCallback),
+  +-5 % rate control around 2048 frames, re-prime after an underrun; TEKKEN4_AUDIO_STATS=1 logs
+  missing/dropped/level/rate every ~5 s. logs\audio_fix1: steady state missing=0 dropped=0; short underruns only
+  during loads (game thread stalls, up to ~130 ms per 5 s).
+  FPS: before patch 30, sound on cost the fight its headroom (logs\perf_sound1: 51-58 fps, 27/38 s below 58;
+  sound off logs\perf_nosound1: 60 every second). Profile (logs\prof_sound2, TEKKEN4_PROFILE=60:25, needs ~15 s
+  after the window for symbols): game thread idle 15.6 % vs 29 % without sound; SoundEngine::drainOutput 5.1 %,
+  SRW locks ~6 %, IopEmulator::runCycles 1.5 %, memmove 3.1 %: the IOP + SPU mixer run on the game thread from
+  EeScheduler::accountCycles (drainMixedAudio). After patch 30: logs\audio_fix1 fight 60.1 avg, 1/45 s below 58
+  (different stage per run, so confirm on a fixed stage).
+  **Next, in order:** (1) the user's test mode: NO Story/Arcade for tests; use a CPU mode where we choose the
+  opponent and the stage (Practice or VS vs CPU: find the key path, then fixed-stage fps runs sound on/off);
+  (2) **music is missing** (user): effects + voices play, BGM doesn't (the driver stops streaming after the
+  3.26 s one-shot, see sound-merge findings); (3) **input lag** (user request): measure raw Windows key event ->
+  guest pad read -> first presented frame that reacts, then cut it (raylib polls input once per host frame;
+  pad read happens on the game thread; GS thread + swap add frames); (4) fps headroom with sound: move IOP/SPU
+  mixing off the game thread or cut its lock traffic.
+- **USER PLAYTEST + KEYBOARD LAYOUT (2026-10-28, session 6).** The user is playing with
   tools\run_game.cmd. At their request the keyboard is now (patch 29, fork eed3828): D-pad = WASD,
   Cross/Circle/Square/Triangle = Down/Right/Left/Up arrows (X/C/Z/V still work), Start = Enter, L1/R1 = Q/E,
   L2/R2 = LeftShift/RightShift, Select = Tab. The keyboard now also works with a gamepad plugged in (before, the

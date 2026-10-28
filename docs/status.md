@@ -53,6 +53,20 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Next goals, in order: (1) sound: clipping (movie PCM added after the SPU clamp) and the char-select silence
   (driver stops issuing libsd/cdvd calls after a 3.26 s one-shot); (2) fps toward 60 (GS ~700 ms/s, game thread
   ~13-18 ms/frame); (3) a CD-completion-callback case for the idle-skip test.
+- **GPU RENDERER (2026-10-28, session 5), RESTART HERE.** Patch 22 = God of War port's OpenGL GS renderer
+  (GSThreadedBackend(GSHwBackend), GPL-3.0, copied unchanged + ~150 lines glue) behind **PS2X_GS_BACKEND=gl**; the CPU
+  renderer stays default. Patch 23 = Tekken fixes: Present scale 1 / DH+1 lines / interlaced line repeat + field
+  offset in the present shader, index-texture dirty-row re-decode (font glyph uploads re-decoded the whole font page),
+  table-based GSMem::ReadIndexRun (+ test, ps2x_tests 482/482), render target format takeover (PAL60 makes the
+  16-bit display buffer fbp 210 a 32-bit one; GoW skipped every draw there = black). Fork branch gs-gl (b954d09).
+  **Results with GL (logs\gl_fight2, RTX 5090):** first menu 60 fps (CPU 60), char select 60 (CPU 48), fight
+  30-34 fps (CPU ~28) with the game thread still ~600 ms/s inside GS calls. Picture: menus, logo, difficulty, main
+  menu, fighters and HUD correct and sharp; **the stage (floor, hall, palms) is missing (black)**, only far
+  spectators show; the intro movie is black; unsupportedBlend ~2000/s in the fight. PS2X_GS_HW_SCALE=2 repeats the
+  frame copy horizontally (keep 1). Next: (1) stage geometry missing (GOW_GS_HW_DUMP / RTLOG / NODEPTH / NOATEST
+  switches to bisect: depth? blend? a Z-format target?); (2) where the game thread waits in the fight with GL
+  (TEKKEN4_PROFILE + TEKKEN4_PROFILE_THREADS=all: GSThreadedBackend sync points, LoadClut, FINISH); (3) movie.
+  Run it: set PS2X_GS_BACKEND=gl (run_capture / run_game inherit it), GOW_GS_HW_STATS=1 for counters.
 - **Playability check (2026-10-28, user: make the game playable, sound only if it crashes):** default build tree is now
   the fork clone (commit 80512fe). Stability (logs\stability1, 430 s, usual keys then hands off): no crash, no error
   line; fight -> CPU wins -> game over -> attract (Greatest Survivors at 390 s). **Game speed is frame-locked:** the

@@ -53,7 +53,16 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Next goals, in order: (1) sound: clipping (movie PCM added after the SPU clamp) and the char-select silence
   (driver stops issuing libsd/cdvd calls after a 3.26 s one-shot); (2) fps toward 60 (GS ~700 ms/s, game thread
   ~13-18 ms/frame); (3) a CD-completion-callback case for the idle-skip test.
-- **SOUND PLAYBACK FIXED + FPS WITH SOUND (2026-10-28, session 6), RESTART HERE.** User: "sound is much better
+- **GROK WAVE (2026-10-28 ~20:30, session 6), RESTART HERE.** User: "fix all of those at the same time by using grok".
+  Running detached (tools\grok_list.ps1): **music** (tree external\wt-music, owns IOP sound files +
+  runtime/tekken4_overrides.cpp), **input-lag** (tree external\wt-input-lag, owns pad/present files + new
+  tools/input_lag.ps1), **test-mode** (no build, owns new tools/run_fixed_fight.ps1: fixed CPU opponent + stage).
+  Prompts in docs/ai/prompts/{music,input-lag,test-mode}.md; brief docs/ai/grok-brief.md updated to today.
+  grok_build.cmd / grok_run.ps1 now use external\wt-<task> automatically. Watcher: tools\grok_wait_all.ps1 -Each.
+  Review per task: results logs\grok\<task>_<time>.json + <task>-notes.md; diff = tools\grok_tree.ps1 -Task <t>
+  -Diff -> logs\grok\<t>-tree.patch; check the numbers, commit into the fork (author Pablo), export patch NN, push.
+  Deferred until music lands (same files): moving the IOP/SPU mixing off the game thread (fps headroom).
+- **SOUND PLAYBACK FIXED + FPS WITH SOUND (2026-10-28, session 6).** User: "sound is much better
   now!". Cause of the choppy sound: raylib's UpdateAudioStream pads every write up to the stream sub-buffer
   (48000/30 = 1600 frames) with silence; we wrote 1024-frame pieces = ~36 % silence in 12 ms gaps, and the queue
   fell behind until it dropped whole seconds (the WAV was written before that step, so it never showed). **Patch 30**

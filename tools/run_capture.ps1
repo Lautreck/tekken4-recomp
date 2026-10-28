@@ -6,13 +6,13 @@ $Keys = @($Keys | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 # times, saves window captures at the given second marks, then closes it. Output: stdout.txt, stderr.txt and
 # shot_NNs.png in $RunDir (default logs\run_<time>).
 # Keys are "<seconds>:<key>" with key = Up, Down, Left, Right, Start, Cross, Circle, Square, Triangle, posted to
-# the window as key presses (held ~250 ms) that the runtime maps to pad 1 (arrows, Enter, X, C, Z, V).
+# the window as key presses (held ~250 ms) that the runtime maps to pad 1 (D-pad WASD, Enter, X, C, Z, V; patch 29).
 # Always pick PAL60 on the display-mode menu (user's request):
 #   powershell -File tools\run_capture.ps1 -Keys "10:Down","12:Cross" -Shots 9,11,16,25
 $root = Split-Path -Parent $PSScriptRoot
 if (-not $RunDir) { $RunDir = Join-Path $root ("logs\run_" + (Get-Date -Format "yyyyMMdd_HHmmss")) }
-$vk = @{ Up = 0x26; Down = 0x28; Left = 0x25; Right = 0x27; Start = 0x0D; Cross = 0x58; Circle = 0x43; Square = 0x5A; Triangle = 0x56 }
-$scan = @{ Up = 0x48; Down = 0x50; Left = 0x4B; Right = 0x4D; Start = 0x1C; Cross = 0x2D; Circle = 0x2E; Square = 0x2C; Triangle = 0x2F }
+$vk = @{ Up = 0x57; Down = 0x53; Left = 0x41; Right = 0x44; Start = 0x0D; Cross = 0x58; Circle = 0x43; Square = 0x5A; Triangle = 0x56 }
+$scan = @{ Up = 0x11; Down = 0x1F; Left = 0x1E; Right = 0x20; Start = 0x1C; Cross = 0x2D; Circle = 0x2E; Square = 0x2C; Triangle = 0x2F }
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
 using System;
@@ -65,7 +65,7 @@ foreach ($e in $events) {
     $p.Refresh(); $h = $p.MainWindowHandle
     if ($e.kind -eq "key") {
         if (-not $vk.ContainsKey($e.key)) { "unknown key $($e.key)"; continue }
-        Send-Key $h $vk[$e.key] $scan[$e.key] (@("Up", "Down", "Left", "Right") -contains $e.key) 250
+        Send-Key $h $vk[$e.key] $scan[$e.key] $false 250
         "pressed $($e.key) at {0:N1} s" -f ((Get-Date) - $t0).TotalSeconds
         continue
     }

@@ -53,6 +53,12 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Next goals, in order: (1) sound: clipping (movie PCM added after the SPU clamp) and the char-select silence
   (driver stops issuing libsd/cdvd calls after a 3.26 s one-shot); (2) fps toward 60 (GS ~700 ms/s, game thread
   ~13-18 ms/frame); (3) a CD-completion-callback case for the idle-skip test.
+- **USER PLAYTEST + KEYBOARD LAYOUT (2026-10-28, session 6), RESTART HERE.** The user is playing with
+  tools\run_game.cmd. At their request the keyboard is now (patch 29, fork eed3828): D-pad = WASD,
+  Cross/Circle/Square/Triangle = Down/Right/Left/Up arrows (X/C/Z/V still work), Start = Enter, L1/R1 = Q/E,
+  L2/R2 = LeftShift/RightShift, Select = Tab. The keyboard now also works with a gamepad plugged in (before, the
+  pad backend ignored it then). tools\run_capture.ps1 presses W/A/S/D for Up/Left/Down/Right (key names unchanged).
+  PCSX2's own keyboard config (arrows = D-pad) is unchanged. Next: go through what the user reports.
 - **PCSX2 COMPARISONS + GUEST RAND (2026-10-28, session 6), RESTART HERE.** Our CPU opponents never varied (arcade
   always Law, story always Steve, at any key timing) while PCSX2 picked Christie, Marduk, Paul. Cause: the recompiler
   maps the game's libc rand (0x2a3178) by name to the runtime stub (host std::rand), but the game's srand

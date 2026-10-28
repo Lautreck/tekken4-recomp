@@ -56,7 +56,8 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
 - **WAVE RESULTS (2026-10-28 ~21:50, session 6), RESTART HERE.**
   - **Input lag: patch 31** (fork 0df63e0, from Grok input-lag, reviewed + 2 fixes): key -> first changed frame
     median 29.8 -> 14.8 ms (tools\input_lag.ps1 -Task <t> -Mode fast -Present paced; logs\input_lag_claude1),
-    fight 60 fps, 482/482. TEKKEN4_INPUT_LAG=1 logs per press; TEKKEN4_INPUT_LEGACY=1 = old path.
+    fight 60 fps, 482/482. TEKKEN4_INPUT_LAG=1 logs per press; TEKKEN4_INPUT_LEGACY=1 = old path. User played
+    (logsSer_path4, Practice Shinjuku 60 fps, Arena 38-44): "inputs feel snappier".
   - **Fixed test fight: tools\run_fixed_fight.ps1** (user's request): Practice, Kazuya vs CPU Yoshimitsu, -Stage
     (default arena), -Task <grok task>, -Env. The stage select opens on a RANDOM slot (shows a random card);
     Right from it = airport .. arena, Left once = arena (logs\fixed_try4..8). tools\stage_card.py checks the card

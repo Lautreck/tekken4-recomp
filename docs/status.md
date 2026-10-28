@@ -75,6 +75,11 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   - music-2 also ran out of 150 turns ($11.6). Its lead: IOP sifcmd ordinal 10 (sceSifAddCmdHandler) is dropped
     (iop_rpc.cpp dispatchSifCmdImport -> setV0(0)), so EE sceSifSendCmd data may never reach zsiopdrv. **music-3**
     started 22:1x with 300 turns (docs/ai/prompts/music-3.md; grok_start.ps1 -MaxTurns now exists).
+  - **User goals (22:2x):** (1) fps + input-latency counters in a corner -> Grok **hud** running (tree
+    external\wt-hud, prompt docs/ai/prompts/hud.md; F3 toggles, TEKKEN4_HUD=0 hides); (2) a perfect 60 fps
+    (user's last session averaged 57 incl. movie/loading; fights 60 except Arena -> arena-perf), then a
+    per-stage fixed-fight sweep (run_fixed_fight.ps1 -Stage each) to find remaining dips; (3) later:
+    "completely control the graphics" (graphics options; ask the user what that covers).
   - Escape no longer quits the game: patch 32 (fork, SetExitKey(KEY_NULL)); only the window X closes it.
 - **GROK WAVE (2026-10-28 ~20:30, session 6).** User: "fix all of those at the same time by using grok".
   Running detached (tools\grok_list.ps1): **music** (tree external\wt-music, owns IOP sound files +

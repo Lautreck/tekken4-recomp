@@ -53,7 +53,21 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Next goals, in order: (1) sound: clipping (movie PCM added after the SPU clamp) and the char-select silence
   (driver stops issuing libsd/cdvd calls after a 3.26 s one-shot); (2) fps toward 60 (GS ~700 ms/s, game thread
   ~13-18 ms/frame); (3) a CD-completion-callback case for the idle-skip test.
-- **PCSX2 BACK + NAME PLATES (2026-10-28, session 6), RESTART HERE.** PCSX2 2.8.2 portable re-installed in external\pcsx2
+- **PCSX2 COMPARISONS + GUEST RAND (2026-10-28, session 6), RESTART HERE.** Our CPU opponents never varied (arcade
+  always Law, story always Steve, at any key timing) while PCSX2 picked Christie, Marduk, Paul. Cause: the recompiler
+  maps the game's libc rand (0x2a3178) by name to the runtime stub (host std::rand), but the game's srand
+  (0x2a3168) runs as game code and seeds the guest state (reent + 88, reent = *0x3059d4) that the stub never reads;
+  the host generator was never seeded. **Fixed by an override** (runtime\tekken4_overrides.cpp guestRand, commit
+  1ff344e): the game's own routine, disassembled from the ELF: 32-bit LCG next * 1103515245 + 12345, result
+  & 0x7fffffff. Also drives the CPU fighters' AI decisions. Now opponents vary (Law, Yoshimitsu, Hwoarang, ...).
+  Upstream note: the runtime stubs rand but not srand, so any game hits this (worth an issue/PR later).
+  Story Battle is a handy test path: our keys ...,36:Cross,41.5:Cross (STORY BATTLE = default entry),
+  46:Cross (Kazuya), 51:Start (skips the prologue; Circle = next, Cross does nothing); PCSX2: 38, 43.5, 48, 54.
+  **Side by side with PCSX2, same stages:** mall interior (logs\gl_rand2 vs logs\pcsx2_story1\pcsx2_74s.png), beach
+  (gl_rand5 vs pcsx2_story2), airport (gl_rand4 vs pcsx2_fight1): sky, lights, billboards, floors, characters, HUD
+  all match; no rendering difference found beyond the name plates (patch 28). Tools: scratchpad dump_mips.py
+  (ELF disassembly of a few words) was handy; GhidraMCP was not connected this session.
+- **PCSX2 BACK + NAME PLATES (2026-10-28, session 6).** PCSX2 2.8.2 portable re-installed in external\pcsx2
   (official GitHub release asset pcsx2-v2.8.2-windows-x64-Qt.7z, sha256 7dfc829c...b4 checked; download kept in
   external\pcsx2_download). Config written by hand: portable.ini + inis\PCSX2.ini (BIOS folder E:\God Hand + Emulator\bios,
   SCPH-70004_BIOS_V12_PAL_200.BIN, used in place, not copied; PINE slot 28011; fast boot; 1x; keyboard pad 1:

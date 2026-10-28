@@ -71,7 +71,7 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
     refills 256 B but the source is all zeros; IOP cdvdman HLE has no sceCdSt*. Continue: docs/ai/prompts/music-2.md
     (tree external\wt-music keeps its diagnostics; runtime/tekken4_overrides.cpp has its +38 uncommitted lines:
     do not stage into the fork until music lands).
-  - Escape still quits the game (todo below).
+  - Escape no longer quits the game: patch 32 (fork, SetExitKey(KEY_NULL)); only the window X closes it.
 - **GROK WAVE (2026-10-28 ~20:30, session 6).** User: "fix all of those at the same time by using grok".
   Running detached (tools\grok_list.ps1): **music** (tree external\wt-music, owns IOP sound files +
   runtime/tekken4_overrides.cpp), **input-lag** (tree external\wt-input-lag, owns pad/present files + new

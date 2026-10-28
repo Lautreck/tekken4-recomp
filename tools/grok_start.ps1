@@ -13,7 +13,7 @@ param(
 #   powershell -File tools\grok_start.ps1 -Name lead -Mode lead
 # Prompts live in docs/ai/prompts/ (committed), never in a temp folder.
 $root = Split-Path -Parent $PSScriptRoot
-& powershell -NoProfile -File "$root	oolsackup_local.ps1" | Out-Null  # additive copy of what git lacks (see backup_local.ps1)
+& powershell -NoProfile -File "$root\tools\backup_local.ps1" | Out-Null  # additive copy of what git lacks (see backup_local.ps1)
 if ($Mode -eq "lead") {
     $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$root\tools\grok_lead.ps1`"", "-Effort", $Effort)
 } else {

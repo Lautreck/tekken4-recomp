@@ -60,7 +60,8 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   the host generator was never seeded. **Fixed by an override** (runtime\tekken4_overrides.cpp guestRand, commit
   1ff344e): the game's own routine, disassembled from the ELF: 32-bit LCG next * 1103515245 + 12345, result
   & 0x7fffffff. Also drives the CPU fighters' AI decisions. Now opponents vary (Law, Yoshimitsu, Hwoarang, ...).
-  Upstream note: the runtime stubs rand but not srand, so any game hits this (worth an issue/PR later).
+  Upstream: reported as https://github.com/ran-j/PS2Recomp/issues/406 (2026-10-28; suggested fix = stop
+  stubbing rand/srand so the guest code runs). Drop our override once upstream fixes it.
   Story Battle is a handy test path: our keys ...,36:Cross,41.5:Cross (STORY BATTLE = default entry),
   46:Cross (Kazuya), 51:Start (skips the prologue; Circle = next, Cross does nothing); PCSX2: 38, 43.5, 48, 54.
   **Side by side with PCSX2, same stages:** mall interior (logs\gl_rand2 vs logs\pcsx2_story1\pcsx2_74s.png), beach

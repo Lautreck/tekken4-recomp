@@ -38,7 +38,21 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
   Mutation check: removing the epoch bump, the DMA-start invalidation or the timrman invalidation each fails the test
   (CD completion callbacks have no test case). `TEKKEN4_IOP_IDLE_SKIP=0` turns the cache off (A/B with one exe).
   New `tools\build_iop_tests.cmd` (TEKKEN4_SRC honoured) builds and runs ps2_iop_emulator/import/compatibility tests:
-  all pass; ps2x_tests 481/481 on the fork tree. Fight fps A/B: see the next bullet once measured.
+  all pass; ps2x_tests 481/481 on the fork tree.
+  **Fight A/B (one exe, fork tree = patches 01-21 + native VU1, keys as usual, alternating runs, fight sec 60-100):**
+  cache on 27.85 / 28.22 fps, off 27.15 / 27.07 -> **+0.9 fps (~3%)**, same sign in both pairs and both halves of the
+  window (logs\iop-sched-3-on1/off1/on2/off2, stats script idea: mean of "perf second N: F frames"). Picture unchanged
+  (frame_70s Kazuya vs Law, frame_stats equal), no error lines. The fork build first came out WITHOUT native VU1:
+  CMake's default vu1n_gen path is <tree>/../../tools, wrong outside external\; build_runtime.cmd now passes
+  PS2X_VU1N_GEN explicitly (commit 6cfa64e).
+  **Build trees:** the fork clone (TEKKEN4_SRC=H:\tekken4-fork-ps2recomp, branch iop-sched-3, generated code staged,
+  out\runtime built) is the only tree that matches the committed patch stack 01-21 exactly. external\PS2Recomp still
+  holds 01-20 + Grok's uncommitted iop-sched-2 WIP on top (checked: 20 reverses; 19 and 21 neither apply nor reverse),
+  so build_runtime there warns and builds it as it is. Nobody resets it (no-delete rule). Decision for the user: make the
+  fork clone the default build tree (scripts default SRC + backup_local), or keep setting TEKKEN4_SRC.
+  Next goals, in order: (1) sound: clipping (movie PCM added after the SPU clamp) and the char-select silence
+  (driver stops issuing libsd/cdvd calls after a 3.26 s one-shot); (2) fps toward 60 (GS ~700 ms/s, game thread
+  ~13-18 ms/frame); (3) a CD-completion-callback case for the idle-skip test.
 - **WAVE 3 MERGED (2026-10-28).** Working copy is H:\tekken4-recomp (F: is never touched). Clean merge done on a fork
   clone H:\tekken4-fork-ps2recomp (branches: wave3-merge = base eb8688b + patches 01-19 + patch 20; wave3 = raw Grok output incl. the
   unfinished iop-sched-2). Tests on the fork: ps2x_tests 481/481. patches/20-ps2xRuntime-gs-review-fixes-and-sound-merge.patch = gs-review-fixes

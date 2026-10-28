@@ -12,6 +12,11 @@
 #include "Stubs/CD.h"
 #include "Stubs/MPEG.h"
 #include <ps2_recompiled_functions.h>
+// Patch 33 (HUD). Guarded while Grok trees built from older patch stacks still stage this file.
+#if __has_include("runtime/ps2_hud.h")
+#include "runtime/ps2_hud.h"
+#define TEKKEN4_HAS_HUD 1
+#endif
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -452,6 +457,14 @@ namespace tekken4
     std::chrono::steady_clock::time_point g_firstFrame;
     uint64_t g_gsDumpFrame = 0u; // TEKKEN4_GS_DUMP=<frame>, 0 = off
 
+    // The HUD's GAME fps counts the frames TEKKEN4_PERF_LOG counts (sound call 0x100, once per main loop pass).
+    void noteHudFrame()
+    {
+#ifdef TEKKEN4_HAS_HUD
+        ps2_hud::noteGameFrame();
+#endif
+    }
+
     // While the GS history records, every GIF packet the arbiter hands to the GS is also written out raw
     // (quadwords as "hi lo", the GIFtag first) to gif_packets_frame<N>.txt.
     std::mutex g_gifLogMutex;
@@ -718,6 +731,8 @@ namespace tekken4
             if (function == kSoundFrameCall)
                 captureGameThread();
 #endif
+            if (function == kSoundFrameCall)
+                noteHudFrame();
             if (function == kSoundFrameCall && ++g_frames == g_nextFrameLog)
             {
                 const auto now = std::chrono::steady_clock::now();
@@ -785,6 +800,8 @@ namespace tekken4
         if (function == kSoundFrameCall)
             captureGameThread();
 #endif
+        if (function == kSoundFrameCall)
+            noteHudFrame();
         if (function == kSoundFrameCall && ++g_frames == g_nextFrameLog)
         {
             const auto now = std::chrono::steady_clock::now();

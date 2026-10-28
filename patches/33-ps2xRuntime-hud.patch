@@ -1,0 +1,519 @@
+diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
+index 42662be..b992bfa 100644
+--- a/ps2xRuntime/CMakeLists.txt
++++ b/ps2xRuntime/CMakeLists.txt
+@@ -384,6 +384,7 @@ add_library(ps2_runtime STATIC
+     src/lib/gs/gs_frontend.cpp
+     src/lib/gs/gs_cpu_backend.cpp
+     src/lib/ps2_input_latency.cpp
++    src/lib/ps2_hud.cpp
+     src/lib/ps2_iop_host.cpp
+     src/lib/ps2_memory.cpp
+     src/lib/ps2_pad.cpp
+diff --git a/ps2xRuntime/include/runtime/ps2_hud.h b/ps2xRuntime/include/runtime/ps2_hud.h
+new file mode 100644
+index 0000000..2609a52
+--- /dev/null
++++ b/ps2xRuntime/include/runtime/ps2_hud.h
+@@ -0,0 +1,25 @@
++#pragma once
++
++#include <cstdint>
++
++// Top-left host overlay (raylib, after the guest frame is drawn). Not part of
++// the latched GS image, so frame shots do not contain it.
++// TEKKEN4_HUD=0 starts hidden. F3 toggles. TEKKEN4_HUD_LOG=1 prints one line
++// per second to stdout.
++namespace ps2_hud
++{
++    // One host present. newGuestFrame: the presented vsync tick changed (GAME fallback).
++    void onHostPresent(bool newGuestFrame);
++
++    // One pass of the game's main loop, from a game override (any thread). Once a game reports frames, GAME
++    // counts these: a 30 fps movie shown on every vsync tick still reads 30.
++    void noteGameFrame();
++
++    // Publish one completed press: t4 - t1 in milliseconds. Window thread.
++    void noteSample(double ms);
++
++    void toggle();
++
++    // Refresh the 2 Hz numbers, optional log, then paint if visible.
++    void draw();
++}
+diff --git a/ps2xRuntime/include/runtime/ps2_input_latency.h b/ps2xRuntime/include/runtime/ps2_input_latency.h
+index 79432e6..8542dc5 100644
+--- a/ps2xRuntime/include/runtime/ps2_input_latency.h
++++ b/ps2xRuntime/include/runtime/ps2_input_latency.h
+@@ -2,14 +2,18 @@
+ 
+ #include <cstdint>
+ 
+-// Host input-latency path. Instrumentation (QPC log, frame hash) runs only when
+-// TEKKEN4_INPUT_LAG=1. TEKKEN4_INPUT_LEGACY=1 keeps the old once-per-host-frame
+-// raylib poll. The fast path samples posted keys from the window thread and
+-// physical keys with GetAsyncKeyState at pad-read time.
++// Host input-latency path. The QPC log and frame hash run only when
++// TEKKEN4_INPUT_LAG=1. t1 (key arrival) and t4 (first swap after the guest
++// read the key) are always stamped, with no hash and no work when no press
++// is open, so the HUD can show latency. TEKKEN4_INPUT_LEGACY=1 keeps the old
++// once-per-host-frame raylib poll. The fast path samples posted keys from the
++// window thread and physical keys with GetAsyncKeyState at pad-read time.
+ namespace ps2_input_latency
+ {
+     bool enabled();
+     bool legacy();
++    // Win32 window hook is installed (F3 is handled there).
++    bool hookInstalled();
+     // "paced" (default): present on a 16.667 ms clock.
+     // "tick" (TEKKEN4_INPUT_PRESENT=tick): present when the guest vsync tick
+     // changes. Measured slower (readback lands while the GS is still drawing).
+diff --git a/ps2xRuntime/src/lib/ps2_hud.cpp b/ps2xRuntime/src/lib/ps2_hud.cpp
+new file mode 100644
+index 0000000..d3e524f
+--- /dev/null
++++ b/ps2xRuntime/src/lib/ps2_hud.cpp
+@@ -0,0 +1,204 @@
++#include "runtime/ps2_hud.h"
++
++#include "raylib.h"
++
++#include <atomic>
++#include <chrono>
++#include <cmath>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++
++namespace
++{
++    struct State
++    {
++        bool inited = false;
++        bool visible = true;
++        bool log = false;
++        bool started = false;
++        bool showHave = false;
++        uint32_t gameAcc = 0;
++        uint32_t hostAcc = 0;
++        uint32_t prevGame = 0;
++        uint32_t prevHost = 0;
++        double prevSec = 0.0;
++        int showGame = 0;
++        int showHost = 0;
++        int showInput = 0;
++        int showAvg = 0;
++        int showN = 0;
++        double showInputMs = -1.0;
++        double showAvgMs = -1.0;
++        double lastMs = 0.0;
++        bool haveLast = false;
++        double ring[10] = {};
++        int ringN = 0;
++        int ringI = 0;
++        int logS = 0;
++        std::chrono::steady_clock::time_point halfStart{};
++        std::chrono::steady_clock::time_point nextLog{};
++    };
++
++    State g;
++    // Frames reported by a game override (game thread). Once any arrive they replace the vsync-tick fallback.
++    std::atomic<uint32_t> g_reportedFrames{0};
++    std::atomic<bool> g_gameReports{false};
++
++    void ensure()
++    {
++        if (g.inited)
++            return;
++        g.inited = true;
++        const char *hud = std::getenv("TEKKEN4_HUD");
++        if (hud && std::strcmp(hud, "0") == 0)
++            g.visible = false;
++        const char *log = std::getenv("TEKKEN4_HUD_LOG");
++        g.log = log && std::strcmp(log, "1") == 0;
++    }
++
++    void refresh(std::chrono::steady_clock::time_point now)
++    {
++        if (!g.started)
++            return;
++        const double sec = std::chrono::duration<double>(now - g.halfStart).count();
++        if (sec < 0.5)
++            return;
++        if (g_gameReports.load(std::memory_order_relaxed))
++            g.gameAcc = g_reportedFrames.exchange(0, std::memory_order_relaxed);
++        const double span = sec + g.prevSec;
++        const double gfps = (g.prevSec > 0.0) ? (static_cast<double>(g.gameAcc + g.prevGame) / span)
++                                               : (static_cast<double>(g.gameAcc) / sec);
++        const double hfps = (g.prevSec > 0.0) ? (static_cast<double>(g.hostAcc + g.prevHost) / span)
++                                               : (static_cast<double>(g.hostAcc) / sec);
++        g.showGame = static_cast<int>(std::lround(gfps));
++        g.showHost = static_cast<int>(std::lround(hfps));
++        if (g.ringN > 0 && g.haveLast)
++        {
++            double sum = 0.0;
++            for (int i = 0; i < g.ringN; ++i)
++                sum += g.ring[i];
++            g.showInputMs = g.lastMs;
++            g.showAvgMs = sum / static_cast<double>(g.ringN);
++            g.showInput = static_cast<int>(std::lround(g.showInputMs));
++            g.showAvg = static_cast<int>(std::lround(g.showAvgMs));
++            g.showN = g.ringN;
++            g.showHave = true;
++        }
++        g.prevGame = g.gameAcc;
++        g.prevHost = g.hostAcc;
++        g.prevSec = sec;
++        g.gameAcc = 0;
++        g.hostAcc = 0;
++        g.halfStart = now;
++    }
++
++    void logLine(std::chrono::steady_clock::time_point now)
++    {
++        if (!g.log || !g.started || now < g.nextLog)
++            return;
++        if (now - g.nextLog > std::chrono::seconds(1))
++            g.nextLog = now;
++        g.nextLog += std::chrono::seconds(1);
++        ++g.logS;
++        if (g.showHave)
++        {
++            std::fprintf(stdout, "[hud] s=%d game=%d host=%d input=%d avg=%d input_ms=%.1f avg_ms=%.1f n=%d\n",
++                         g.logS, g.showGame, g.showHost, g.showInput, g.showAvg, g.showInputMs, g.showAvgMs, g.showN);
++        }
++        else
++        {
++            std::fprintf(stdout, "[hud] s=%d game=%d host=%d input=- avg=- input_ms=-1 avg_ms=-1 n=0\n",
++                         g.logS, g.showGame, g.showHost);
++        }
++        std::fflush(stdout);
++    }
++}
++
++namespace ps2_hud
++{
++    void onHostPresent(bool newGuestFrame)
++    {
++        ensure();
++        const auto now = std::chrono::steady_clock::now();
++        if (!g.started)
++        {
++            g.started = true;
++            g.halfStart = now;
++            g.nextLog = now + std::chrono::seconds(1);
++        }
++        ++g.hostAcc;
++        if (newGuestFrame)
++            ++g.gameAcc;
++    }
++
++    void noteGameFrame()
++    {
++        g_reportedFrames.fetch_add(1, std::memory_order_relaxed);
++        g_gameReports.store(true, std::memory_order_relaxed);
++    }
++
++    void noteSample(double ms)
++    {
++        ensure();
++        if (!(ms >= 0.0))
++            return;
++        g.lastMs = ms;
++        g.haveLast = true;
++        g.ring[g.ringI] = ms;
++        g.ringI = (g.ringI + 1) % 10;
++        if (g.ringN < 10)
++            ++g.ringN;
++    }
++
++    void toggle()
++    {
++        ensure();
++        g.visible = !g.visible;
++    }
++
++    void draw()
++    {
++        ensure();
++        const auto now = std::chrono::steady_clock::now();
++        refresh(now);
++        logLine(now);
++        if (!g.visible)
++            return;
++
++        char line0[64];
++        char line1[64];
++        char line2[64];
++        char line3[64];
++        std::snprintf(line0, sizeof(line0), "GAME %d fps", g.showGame);
++        std::snprintf(line1, sizeof(line1), "HOST %d fps", g.showHost);
++        if (g.showHave)
++        {
++            std::snprintf(line2, sizeof(line2), "INPUT %d ms", g.showInput);
++            std::snprintf(line3, sizeof(line3), "AVG %d ms", g.showAvg);
++        }
++        else
++        {
++            std::snprintf(line2, sizeof(line2), "INPUT -- ms");
++            std::snprintf(line3, sizeof(line3), "AVG -- ms");
++        }
++        const char *lines[4] = {line0, line1, line2, line3};
++        constexpr int font = 18;
++        constexpr int lineH = 22;
++        constexpr int pad = 8;
++        int maxW = 0;
++        for (const char *line : lines)
++        {
++            const int w = MeasureText(line, font);
++            if (w > maxW)
++                maxW = w;
++        }
++        const int boxX = 6;
++        const int boxY = 6;
++        const int boxW = maxW + pad * 2;
++        const int boxH = 4 * lineH + pad;
++        DrawRectangle(boxX, boxY, boxW, boxH, Color{0, 0, 0, 190});
++        for (int i = 0; i < 4; ++i)
++            DrawText(lines[i], boxX + pad, boxY + 4 + i * lineH, font, WHITE);
++    }
++}
+diff --git a/ps2xRuntime/src/lib/ps2_input_latency.cpp b/ps2xRuntime/src/lib/ps2_input_latency.cpp
+index 4345902..4f605c1 100644
+--- a/ps2xRuntime/src/lib/ps2_input_latency.cpp
++++ b/ps2xRuntime/src/lib/ps2_input_latency.cpp
+@@ -1,7 +1,7 @@
+-// Compiled into the GS GL translation unit (that file already includes windows.h
+-// and does not include raylib). src/lib/*.cpp is an explicit CMake list; this
+-// file is #included from gs/gpu/gs_gl.cpp so it links without a CMake edit.
++// Includes windows.h and not raylib (their names clash), so it is its own
++// translation unit in the CMake source list.
+ #include "runtime/ps2_input_latency.h"
++#include "runtime/ps2_hud.h"
+ 
+ #include <atomic>
+ #include <cstdio>
+@@ -48,9 +48,12 @@ namespace
+         uint64_t hashAtT5 = 0;
+         int stage = 0; // 1 t1, 2 t2, 3 t3, 4 t4, 5 printed
+         int latchesAfterT2 = 0;
++        bool sampleSent = false;
++        bool counted = false;
+     };
+ 
+     std::atomic<uint16_t> g_posted{0};
++    std::atomic<int> g_open{0};
+     std::atomic<uintptr_t> g_hwnd{0};
+     std::atomic<uint16_t> g_asyncCache{0};
+     std::atomic<uint64_t> g_asyncCacheQpc{0};
+@@ -196,6 +199,11 @@ namespace
+         }
+         if (!slot)
+             slot = &g_press[0];
++        if (slot->counted)
++        {
++            slot->counted = false;
++            g_open.fetch_sub(1, std::memory_order_relaxed);
++        }
+         *slot = Press{};
+         slot->seq = ++g_seq;
+         slot->vk = vk;
+@@ -203,6 +211,38 @@ namespace
+         slot->t1 = qpc();
+         slot->hashBefore = g_lastHash.load(std::memory_order_relaxed);
+         slot->stage = 1;
++        slot->counted = true;
++        g_open.fetch_add(1, std::memory_order_release);
++    }
++
++    void releaseSlot(Press &p, int stage)
++    {
++        if (p.counted)
++        {
++            p.counted = false;
++            g_open.fetch_sub(1, std::memory_order_release);
++        }
++        p.stage = stage;
++    }
++
++    // Game thread. scePadRead calls notePad only when TEKKEN4_INPUT_LAG=1
++    // (Pad.cpp, not this task's files). The fast path already samples the pad
++    // here, so t2 is stamped from that read as well.
++    void stampSeen(uint16_t pressedMask, uint64_t vsyncTick)
++    {
++        if (pressedMask == 0 || g_open.load(std::memory_order_acquire) == 0)
++            return;
++        std::lock_guard<std::mutex> lock(g_pressMu);
++        const uint64_t now = qpc();
++        for (Press &p : g_press)
++        {
++            if (p.stage == 1 && (pressedMask & p.bit) != 0)
++            {
++                p.t2 = now;
++                p.tickAtT2 = vsyncTick;
++                p.stage = 2;
++            }
++        }
+     }
+ 
+     LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+@@ -211,6 +251,8 @@ namespace
+         {
+             const bool down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
+             const bool repeat = down && ((lp & (static_cast<LPARAM>(1) << 30)) != 0);
++            if (down && !repeat && wp == VK_F3)
++                ps2_hud::toggle();
+             const uint16_t bit = vkToPad(wp);
+             if (bit != 0)
+             {
+@@ -218,7 +260,8 @@ namespace
+                     g_posted.fetch_or(bit, std::memory_order_release);
+                 else
+                     g_posted.fetch_and(static_cast<uint16_t>(~bit), std::memory_order_release);
+-                if (down && !repeat && ps2_input_latency::enabled())
++                // One stamp per physical press. No hash. Idle path does not get here.
++                if (down && !repeat)
+                     openPress(static_cast<uint32_t>(wp), bit);
+             }
+         }
+@@ -309,6 +352,11 @@ namespace ps2_input_latency
+         return tick;
+     }
+ 
++    bool hookInstalled()
++    {
++        return g_oldProc != nullptr;
++    }
++
+     void attachWindow(void *hwnd)
+     {
+         if (!hwnd)
+@@ -369,31 +417,21 @@ namespace ps2_input_latency
+             g_asyncCacheQpc.store(now, std::memory_order_release);
+         }
+         padDownMask = static_cast<uint16_t>(mask | asyncMask);
++        if (padDownMask != 0)
++            stampSeen(padDownMask, 0);
+         return true;
+     }
+ 
+     void notePad(uint16_t pressedMask, uint64_t vsyncTick)
+     {
+-        if (!enabled() || pressedMask == 0)
+-            return;
+-        std::lock_guard<std::mutex> lock(g_pressMu);
+-        const uint64_t now = qpc();
+-        for (Press &p : g_press)
+-        {
+-            if (p.stage == 1 && (pressedMask & p.bit) != 0)
+-            {
+-                p.t2 = now;
+-                p.tickAtT2 = vsyncTick;
+-                p.stage = 2;
+-            }
+-        }
++        stampSeen(pressedMask, vsyncTick);
+     }
+ 
+     void onLatchBegin(uint64_t vsyncTick)
+     {
+         (void)vsyncTick;
+         g_latched = true;
+-        if (!enabled())
++        if (g_open.load(std::memory_order_acquire) == 0)
+             return;
+         std::lock_guard<std::mutex> lock(g_pressMu);
+         const uint64_t now = qpc();
+@@ -416,15 +454,14 @@ namespace ps2_input_latency
+ 
+     void onSwapReturned()
+     {
+-        if (!enabled())
+-        {
+-            g_latched = false;
+-            return;
+-        }
+         const bool latched = g_latched;
+         g_latched = false;
++        if (g_open.load(std::memory_order_acquire) == 0)
++            return;
++        const bool full = enabled();
+         const uint64_t now = qpc();
+-        const uint64_t hash = g_lastHash.load(std::memory_order_relaxed);
++        const uint64_t hash = full ? g_lastHash.load(std::memory_order_relaxed) : 0;
++        const uint64_t freq = qpcFreq();
+         std::lock_guard<std::mutex> lock(g_pressMu);
+         for (Press &p : g_press)
+         {
+@@ -434,6 +471,20 @@ namespace ps2_input_latency
+             {
+                 p.t4 = now;
+                 p.stage = 4;
++                if (!p.sampleSent && p.t1 != 0 && p.t4 >= p.t1 && freq != 0)
++                {
++                    p.sampleSent = true;
++                    const double ms = (static_cast<double>(p.t4 - p.t1) * 1000.0) / static_cast<double>(freq);
++                    ps2_hud::noteSample(ms);
++                }
++            }
++            if (!full)
++            {
++                // No frame hash on this path. Drop a press the guest never reads.
++                const bool timedOut = p.t1 != 0 && freq != 0 && (now - p.t1) > freq * 2u;
++                if (p.stage == 4 || timedOut)
++                    releaseSlot(p, 0);
++                continue;
+             }
+             // Pixels hashed for this swap were latched in onLatchBegin. That
+             // latch is only after the pad read once t3 is set. A swap that
+@@ -449,8 +500,8 @@ namespace ps2_input_latency
+             const bool gaveUp = p.latchesAfterT2 > 45;
+             if ((done || gaveUp) && p.stage < 5)
+             {
+-                p.stage = 5;
+                 printPress(p);
++                releaseSlot(p, 5);
+             }
+         }
+     }
+@@ -462,6 +513,7 @@ namespace ps2_input_latency
+ {
+     bool enabled() { return false; }
+     bool legacy() { return false; }
++    bool hookInstalled() { return false; }
+     bool presentOnTick() { return false; }
+     void attachWindow(void *) {}
+     void detachWindow() {}
+diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
+index ccd9193..6d87fb4 100644
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -12,6 +12,7 @@
+ #include "Kernel/Stubs/MPEG.h"
+ #include "ps2_host_backend.h"
+ #include "runtime/ps2_input_latency.h"
++#include "runtime/ps2_hud.h"
+ #include "ps2_iop_host.h"
+ #include "ps2x/iop/iop_subsystem.h"
+ 
+@@ -390,6 +391,8 @@ static void UploadFrame(Texture2D &tex, PS2Runtime *rt, uint32_t &outWidth, uint
+ 
+     const uint64_t currentTick = rt->eeScheduler().currentVSyncTick();
+     const bool needsLatch = !s_hasLatchedInitialFrame || currentTick != s_lastPresentationTick;
++    // Fallback guest fps (no game override reports its frames): a new presented vsync tick.
++    ps2_hud::onHostPresent(needsLatch);
+     if (needsLatch)
+     {
+         ps2_input_latency::onLatchBegin(currentTick);
+@@ -2433,6 +2436,11 @@ void PS2Runtime::run()
+             dstWidth,
+             dstHeight};
+         DrawTexturePro(frameTex, srcRect, dstRect, Vector2{0.0f, 0.0f}, 0.0f, WHITE);
++        // Legacy present never installs the Win32 hook, so F3 is read here.
++        // The hook path toggles inside the window procedure (one edge).
++        if (!ps2_input_latency::hookInstalled() && IsKeyPressed(KEY_F3))
++            ps2_hud::toggle();
++        ps2_hud::draw();
+         if (m_debugUiInitialized && m_debugUiDrawCallback)
+         {
+             m_debugUiDrawCallback(*this, m_debugUiUserData);

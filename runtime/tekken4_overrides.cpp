@@ -835,9 +835,14 @@ namespace tekken4
         setReturnS32(ctx, 0); // never busy: every call completes inside sifCallRpc
     }
 
-    // The recompiled sceSifSendCmd ends in ps2_syscalls::sceSifSendCmd, which copies an extra payload and
-    // returns 1. It does not store SIF_CMD_SET_SREG. zsiopdrv's init (handler 0x4c6b4) spins on
-    // sceSifGetSreg(31) until that store is non-zero. The game writes index 31 = 1 at 0x228ca8, before the bind.
+    // The recompiled sceSifSendCmd ends in ps2_syscalls::sceSifSendCmd, which copies the extra payload to IOP RAM
+    // and hands the packet to the IOP module's command handler. It does not store SIF_CMD_SET_SREG. zsiopdrv's init
+    // (handler 0x4c6b4) spins on sceSifGetSreg(31) until that store is non-zero. The game writes index 31 = 1 at
+    // 0x228ca8, before the bind.
+    // zsiopdrv also pulls sound data from EE RAM: it asks with SIF command 2 (EE handler 0x228a08), the main loop
+    // (0x228d90) answers with FUN_00228cc8 = sceSifSendCmd(cid 0, 0x1ccacc0, 0x24, EE source, IOP dest, size).
+    // TEKKEN4_BGM=0 restores the state before the music fix (docs/MUSIC_FIX.md) for A/B runs: payload and packet
+    // are dropped here, and the IOP delivers no SPU2 interrupts (the BGM stream's refill clock).
     void sifSendCmd(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         ctx->pc = getRegU32(ctx, 31);
@@ -854,6 +859,16 @@ namespace tekken4
                 std::memcpy(&value, bytes + 20, 4);
                 have = index < 32u;
             }
+        }
+        static const bool bgmOff = []
+        {
+            const char *env = std::getenv("TEKKEN4_BGM");
+            return env && std::strcmp(env, "0") == 0;
+        }();
+        if (cid != kSifCmdSetSreg && bgmOff)
+        {
+            setReturnS32(ctx, 1);
+            return;
         }
         ps2_syscalls::sceSifSendCmd(rdram, ctx, runtime);
         if (!have)

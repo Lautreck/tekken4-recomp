@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-10-29 08:07 (session 7)_
+_Last updated: 2026-10-29 08:17 (session 7)_
 
 ## Resume here
 To continue, open Claude Code in this folder and say: "read docs/status.md and continue".
@@ -144,7 +144,13 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
     debugger when it lands: drop that press once Grok stage-pick releases run_capture.ps1).
     CAUTION: stage_generated.cmd copies ALL runtime/*_overrides.cpp, incl. Grok's uncommitted stage-pick WIP of
     tekken4_frameshot_overrides.cpp; the default build got the committed version back by hand.
-    Next step: (4) forced texture filtering, FXAA, sharpening (post pass on presentTex or host shader).
+    **Step 4 DONE = patch 40** (fork 9890545): F2 texture filtering (game / bilinear for 3D, sprites keep the
+    game's filter), FXAA + sharpening 0-100 % as a raylib fragment shader on the frame-to-window draw (HUD/ImGui
+    unaffected). logs/post1-2: 60 fps, plane moire and sword edges smoothed vs logs/ws_default. **All four parts of
+    the user's graphics goal are in** (patches 37-40): settings window F2, internal resolution 1x-4x, widescreen 16:9,
+    filtering/AA/sharpening. Possible follow-ups: zero-copy present at 3x-4x (readback 10-18 MB/frame), a
+    deinterlace option (per-field 1-row bob at scale), resize the window to 16:9 when widescreen is turned on,
+    user play-test of all options.
   - (earlier) **Grok running:** **music-4** (docs/ai/prompts/music-4.md, wt-music, 300 turns): music-3 refuted the wrong
     thing; the SDK copies the sceSifSendCmd extra payload by SIF DMA, and the chain is a handshake (EE cid 0 ->
     IOP handler 0x4f4f4 -> 0x49620 -> IOP cid 2 reply -> EE clears guard 0x1ccd400). Broken links: RPC.cpp

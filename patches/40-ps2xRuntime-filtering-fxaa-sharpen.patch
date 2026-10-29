@@ -1,0 +1,245 @@
+diff --git a/ps2xRuntime/include/runtime/ps2_graphics_settings.h b/ps2xRuntime/include/runtime/ps2_graphics_settings.h
+index 3ae61a4..ba7e8fd 100644
+--- a/ps2xRuntime/include/runtime/ps2_graphics_settings.h
++++ b/ps2xRuntime/include/runtime/ps2_graphics_settings.h
+@@ -13,12 +13,21 @@ namespace ps2_graphics
+         Native = 3,    // the frame's own pixel ratio (640x448 -> 1.43:1), the old behaviour
+     };
+ 
++    enum class TextureFilter : int
++    {
++        Game = 0,     // the game's TEX1 filter (the PS2's look)
++        Bilinear = 1, // forced for 3D textures, sprites keep the game's
++    };
++
+     struct Settings
+     {
+         Aspect aspect = Aspect::Ratio4x3;
+         bool smoothScreen = false; // bilinear filtering when the frame is scaled to the window
+         int internalScale = 1;     // GL GS renderer resolution, 1..4 x the PS2's (PS2X_GS_HW_SCALE wins until changed)
+         bool widescreen = false;   // runtime switch "widescreen": the game's 16:9 patch ([patches] in the recompiler config)
++        TextureFilter textureFilter = TextureFilter::Game;
++        bool fxaa = false;         // FXAA on the frame as it is drawn to the window
++        int sharpen = 0;           // 0..100 %, contrast-limited sharpening in the same pass
+     };
+     constexpr int kMaxInternalScale = 4;
+ 
+diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
+index 29a58a2..3c0d001 100644
+--- a/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
+@@ -522,6 +522,7 @@ struct GSHwBackend::Impl
+     // applyScale at a present.
+     float scale = 1.0f;
+     int settingsScale = 1; // the settings value last applied
++    bool forceBilinear = false; // ps2_graphics::Settings::textureFilter, read once per present
+     GLuint program = 0, vao = 0, vbo = 0;
+     GLint locInvSize = -1, locTex = -1, locTexSize = -1, locTexDim = -1, locTme = -1, locFst = -1, locTfx = -1, locTcc = -1, locIip = -1,
+           locAte = -1, locFailTint = -1, locAtst = -1, locAref = -1, locPass = -1, locBlendScale = -1, locRtTex24 = -1, locTa0 = -1, locTa1 = -1, locReinterp = -1, locDate = -1, locDatm = -1, locDest = -1, locZTex = -1, locZMax = -1, locTables = -1, locRtColor = -1, locPalette = -1, locTexFmt = -1, locTexFmt2 = -1,
+@@ -2463,7 +2464,11 @@ struct GSHwBackend::Impl
+             const bool indexed = !(src || rsrc || zsrc) && isIndexed(c.tex0.psm) && vram != nullptr;
+             Texture &tex = (src || rsrc || zsrc) ? dummy : indexed ? indexTextureFor(s) : textureFor(s);
+             g.Uniform1i(locIndexed, indexed ? 1 : 0);
+-            g.Uniform1i(locLinear, s.linearFilter ? 1 : 0);
++            // Settings "texture filtering: bilinear" forces it for uploaded textures of 3D primitives (PCSX2's "forced
++            // excluding sprite"): 2D sprites and target copies keep the game's filter.
++            const bool linear = s.linearFilter ||
++                                (forceBilinear && !(src || rsrc || zsrc) && s.prim.type != GS_PRIM_SPRITE);
++            g.Uniform1i(locLinear, linear ? 1 : 0);
+             // Tekken 4 port: the CLAMP modes as they are (region modes for every texture source but depth/reinterpret)
+             const bool regionOk = !zsrc && !rsrc;
+             const GLint wms = static_cast<GLint>(c.clamp & 3u), wmt = static_cast<GLint>((c.clamp >> 2) & 3u);
+@@ -2487,7 +2492,7 @@ struct GSHwBackend::Impl
+             g.Uniform1f(locTa0, static_cast<float>(s.texa.ta0));
+             g.Uniform1f(locTa1, static_cast<float>(s.texa.ta1));
+             g.Uniform1i(locAem, s.texa.aem ? 1 : 0);
+-            const GLint filter = s.linearFilter ? kLinear : kNearest;
++            const GLint filter = linear ? kLinear : kNearest;
+             g.TexParameteri(kTexture2D, kTextureMinFilter, filter);
+             g.TexParameteri(kTexture2D, kTextureMagFilter, filter);
+             const uint64_t clamp = c.clamp;
+@@ -2966,11 +2971,13 @@ PresentationFrame GSHwBackend::Present(const GSPresentationRequest &request)
+     if (!d.ensure())
+         return frame;
+     d.flushPending(Impl::WhyPresent);
+-    if (const int wanted = ps2_graphics::get().internalScale; wanted != d.settingsScale)
++    const ps2_graphics::Settings graphics = ps2_graphics::get();
++    if (graphics.internalScale != d.settingsScale)
+     {
+-        d.settingsScale = wanted;
+-        d.applyScale(static_cast<float>(wanted));
++        d.settingsScale = graphics.internalScale;
++        d.applyScale(static_cast<float>(graphics.internalScale));
+     }
++    d.forceBilinear = graphics.textureFilter == ps2_graphics::TextureFilter::Bilinear;
+     ++d.presentCount;
+     d.dumpAfterSkip = false;
+     d.frameBatch = 0;
+diff --git a/ps2xRuntime/src/lib/ps2_debug_panel.cpp b/ps2xRuntime/src/lib/ps2_debug_panel.cpp
+index a564460..a06b40e 100644
+--- a/ps2xRuntime/src/lib/ps2_debug_panel.cpp
++++ b/ps2xRuntime/src/lib/ps2_debug_panel.cpp
+@@ -2213,10 +2213,20 @@ namespace
+                 settings.internalScale = scaleIndex + 1;
+                 changed = true;
+             }
++            static const char *const kFilters[] = {"As the game (PS2 look)", "Bilinear (3D, sprites as the game)"};
++            int filter = static_cast<int>(settings.textureFilter);
++            if (ImGui::Combo("Texture filtering", &filter, kFilters, IM_ARRAYSIZE(kFilters)))
++            {
++                settings.textureFilter = static_cast<ps2_graphics::TextureFilter>(filter);
++                changed = true;
++            }
++            ImGui::SeparatorText("Post-processing");
++            changed |= ImGui::Checkbox("Anti-aliasing (FXAA)", &settings.fxaa);
++            changed |= ImGui::SliderInt("Sharpening", &settings.sharpen, 0, 100, "%d %%");
+             if (changed)
+                 ps2_graphics::set(settings);
+             ImGui::Spacing();
+-            ImGui::TextDisabled("Coming next: texture filtering, anti-aliasing, sharpening.");
++            ImGui::TextDisabled("Tip: 2x-4x internal resolution also smooths edges (supersampling).");
+             const char *path = std::getenv("PS2X_SETTINGS");
+             if (path && path[0])
+                 ImGui::TextDisabled("Saved to %s", path);
+diff --git a/ps2xRuntime/src/lib/ps2_graphics_settings.cpp b/ps2xRuntime/src/lib/ps2_graphics_settings.cpp
+index 9ead03a..b879a30 100644
+--- a/ps2xRuntime/src/lib/ps2_graphics_settings.cpp
++++ b/ps2xRuntime/src/lib/ps2_graphics_settings.cpp
+@@ -48,6 +48,12 @@ namespace ps2_graphics
+                     g_settings.internalScale = value;
+                 else if (key == "widescreen")
+                     g_settings.widescreen = value != 0;
++                else if (key == "texture_filter" && (value == 0 || value == 1))
++                    g_settings.textureFilter = static_cast<TextureFilter>(value);
++                else if (key == "fxaa")
++                    g_settings.fxaa = value != 0;
++                else if (key == "sharpen" && value >= 0 && value <= 100)
++                    g_settings.sharpen = value;
+             }
+             std::fclose(file);
+         }
+@@ -70,6 +76,9 @@ namespace ps2_graphics
+             std::fprintf(file, "smooth_screen=%d\n", g_settings.smoothScreen ? 1 : 0);
+             std::fprintf(file, "internal_scale=%d\n", g_settings.internalScale);
+             std::fprintf(file, "widescreen=%d\n", g_settings.widescreen ? 1 : 0);
++            std::fprintf(file, "texture_filter=%d\n", static_cast<int>(g_settings.textureFilter));
++            std::fprintf(file, "fxaa=%d\n", g_settings.fxaa ? 1 : 0);
++            std::fprintf(file, "sharpen=%d\n", g_settings.sharpen);
+             std::fclose(file);
+         }
+     }
+diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
+index 03955b7..bbde023 100644
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -2430,6 +2430,81 @@ void PS2Runtime::run()
+     bool smoothFrameTex = false; // raylib's default filter is point
+     unsigned int filteredTexId = frameTex.id;
+ 
++    // Settings FXAA / sharpening: one fragment shader while the frame is drawn to the window (the HUD and the
++    // ImGui windows are drawn after it, untouched). Loaded on first use, on this thread (the window's GL context).
++    static const char *const kPostFs = R"(#version 330
++in vec2 fragTexCoord;
++in vec4 fragColor;
++uniform sampler2D texture0;
++uniform vec4 colDiffuse;
++uniform vec2 texel;   // 1 / texture size
++uniform vec2 uvMax;   // the frame's last texel centre (the texture can be larger than the frame)
++uniform int fxaaOn;
++uniform float sharpen; // 0..1
++out vec4 finalColor;
++vec3 tap(vec2 uv) { return texture(texture0, min(uv, uvMax)).rgb; }
++float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
++// FXAA (Lottes' console variant): blend along the local edge direction, keep the result inside the 3x3 luma range
++vec3 fxaa(vec2 uv)
++{
++    vec3 nw = tap(uv + vec2(-1.0, -1.0) * texel), ne = tap(uv + vec2(1.0, -1.0) * texel);
++    vec3 sw = tap(uv + vec2(-1.0, 1.0) * texel), se = tap(uv + vec2(1.0, 1.0) * texel), m = tap(uv);
++    float lNW = luma(nw), lNE = luma(ne), lSW = luma(sw), lSE = luma(se), lM = luma(m);
++    float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE)));
++    float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));
++    vec2 dir = vec2(-((lNW + lNE) - (lSW + lSE)), (lNW + lSW) - (lNE + lSE));
++    float reduce = max((lNW + lNE + lSW + lSE) * (0.25 / 8.0), 1.0 / 128.0);
++    dir = clamp(dir / (min(abs(dir.x), abs(dir.y)) + reduce), vec2(-8.0), vec2(8.0)) * texel;
++    vec3 a = 0.5 * (tap(uv + dir * (1.0 / 3.0 - 0.5)) + tap(uv + dir * (2.0 / 3.0 - 0.5)));
++    vec3 b = a * 0.5 + 0.25 * (tap(uv - dir * 0.5) + tap(uv + dir * 0.5));
++    float lB = luma(b);
++    return (lB < lMin || lB > lMax) ? a : b;
++}
++void main()
++{
++    vec2 uv = fragTexCoord;
++    vec3 c = fxaaOn != 0 ? fxaa(uv) : tap(uv);
++    if (sharpen > 0.0)
++    {
++        // unsharp mask limited to the cross's range: no halos
++        vec3 n = tap(uv - vec2(0.0, texel.y)), s = tap(uv + vec2(0.0, texel.y));
++        vec3 e = tap(uv + vec2(texel.x, 0.0)), w = tap(uv - vec2(texel.x, 0.0));
++        vec3 lo = min(c, min(min(n, s), min(e, w))), hi = max(c, max(max(n, s), max(e, w)));
++        c = clamp(c + (c - (n + s + e + w) * 0.25) * (2.0 * sharpen), lo, hi);
++    }
++    finalColor = vec4(c, 1.0) * colDiffuse * fragColor;
++}
++)";
++    Shader postShader{};
++    bool postShaderTried = false;
++    int locPostTexel = -1, locPostUvMax = -1, locPostFxaa = -1, locPostSharpen = -1;
++    auto beginPostShader = [&](const ps2_graphics::Settings &graphics, float frameWidth, float frameHeight)
++    {
++        if (!graphics.fxaa && graphics.sharpen <= 0)
++            return false;
++        if (!postShaderTried)
++        {
++            postShaderTried = true;
++            postShader = LoadShaderFromMemory(nullptr, kPostFs);
++            locPostTexel = GetShaderLocation(postShader, "texel");
++            locPostUvMax = GetShaderLocation(postShader, "uvMax");
++            locPostFxaa = GetShaderLocation(postShader, "fxaaOn");
++            locPostSharpen = GetShaderLocation(postShader, "sharpen");
++        }
++        if (!IsShaderValid(postShader))
++            return false;
++        const float texel[2] = {1.0f / static_cast<float>(frameTex.width), 1.0f / static_cast<float>(frameTex.height)};
++        const float uvMax[2] = {(frameWidth - 0.5f) * texel[0], (frameHeight - 0.5f) * texel[1]};
++        const int fxaaOn = graphics.fxaa ? 1 : 0;
++        const float sharpen = static_cast<float>(graphics.sharpen) / 100.0f;
++        SetShaderValue(postShader, locPostTexel, texel, SHADER_UNIFORM_VEC2);
++        SetShaderValue(postShader, locPostUvMax, uvMax, SHADER_UNIFORM_VEC2);
++        SetShaderValue(postShader, locPostFxaa, &fxaaOn, SHADER_UNIFORM_INT);
++        SetShaderValue(postShader, locPostSharpen, &sharpen, SHADER_UNIFORM_FLOAT);
++        BeginShaderMode(postShader);
++        return true;
++    };
++
+     // PS2X_HOST_SHOTS=<s>,<s>,...: the window's final picture (aspect, HUD, settings window) at those seconds as
+     // host_<s>s.png in the working directory. Read back before the swap, so it works with the monitor off; the
+     // frame shots (TEKKEN4_FRAME_SHOTS) only hold the guest frame.
+@@ -2479,7 +2554,7 @@ void PS2Runtime::run()
+         ++nextHostShot;
+     };
+ 
+-    auto presentHostFrame = [this, &frameTex, &smoothFrameTex, &filteredTexId, &takeHostShot]()
++    auto presentHostFrame = [this, &frameTex, &smoothFrameTex, &filteredTexId, &takeHostShot, &beginPostShader]()
+     {
+         uint32_t presentWidth = FB_WIDTH;
+         uint32_t presentHeight = DEFAULT_DISPLAY_HEIGHT;
+@@ -2512,7 +2587,10 @@ void PS2Runtime::run()
+             (screenHeight - dstHeight) * 0.5f,
+             dstWidth,
+             dstHeight};
++        const bool post = beginPostShader(graphics, srcWidth, srcHeight);
+         DrawTexturePro(frameTex, srcRect, dstRect, Vector2{0.0f, 0.0f}, 0.0f, WHITE);
++        if (post)
++            EndShaderMode();
+         // Legacy present never installs the Win32 hook, so F3 is read here.
+         // The hook path toggles inside the window procedure (one edge).
+         if (!ps2_input_latency::hookInstalled() && IsKeyPressed(KEY_F3))
+@@ -2628,6 +2706,8 @@ void PS2Runtime::run()
+         m_debugUiInitialized = false;
+     }
+     UnloadTexture(frameTex);
++    if (IsShaderValid(postShader))
++        UnloadShader(postShader);
+     CloseWindow();
+ 
+     RUNTIME_LOG("[run] exiting loop");

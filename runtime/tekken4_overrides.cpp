@@ -852,9 +852,11 @@ namespace tekken4
         setReturnS32(ctx, 0); // never busy: every call completes inside sifCallRpc
     }
 
-    // The recompiled sceSifSendCmd ends in ps2_syscalls::sceSifSendCmd, which copies an extra payload and
-    // returns 1. It does not store SIF_CMD_SET_SREG. zsiopdrv's init (handler 0x4c6b4) spins on
+    // The recompiled sceSifSendCmd ends in ps2_syscalls::sceSifSendCmd, which writes an extra payload to IOP RAM
+    // and returns 1. It does not store SIF_CMD_SET_SREG. zsiopdrv's init (handler 0x4c6b4) spins on
     // sceSifGetSreg(31) until that store is non-zero. The game writes index 31 = 1 at 0x229608, before the bind.
+    // User cids (bit 31 clear) go to the handler zsiopdrv registered for them: cid 0 from 0x229628 carries a
+    // 16 KB block to the driver's ring at IOP 0x148000, and handler 0x4f4f4 answers with cid 2.
     void sifSendCmd(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         ctx->pc = getRegU32(ctx, 31);
@@ -873,6 +875,14 @@ namespace tekken4
             }
         }
         ps2_syscalls::sceSifSendCmd(rdram, ctx, runtime);
+#ifdef PS2X_IOP_HAS_USER_SIF_CMD // patch 36; Grok trees built from older patch stacks still stage this file
+        // The DMA completes whether or not the IOP has a handler for the cid, so the return value stays.
+        if ((cid & 0x80000000u) == 0u && getRegU32(ctx, 2) != 0u && packet != 0u)
+        {
+            if (const uint8_t *bytes = getMemPtr(rdram, packet))
+                (void)ps2x::iop::deliverEeUserSifCmd(cid, bytes, getRegU32(ctx, 6));
+        }
+#endif
         if (!have)
             return;
         ps2x::iop::setSifSoftwareRegister(index, value);

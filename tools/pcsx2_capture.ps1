@@ -9,6 +9,7 @@ $Keys = @($Keys | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 # (-Pcsx2 "E:\God Hand + Emulator\pcsx2.exe") boots in English but its LilyPad pad doesn't take our key presses.
 # Keys are "<seconds>:<key>" with key = Up, Down, Left, Right, Start, Cross, Circle, Square, Triangle: real key
 # presses with the PCSX2 window briefly brought to the front, then focus goes back.
+# "<seconds>:State<n>" saves a savestate to slot n through PINE instead (tools\iop_diff.py reads its IOP RAM).
 # Always pick PAL60 on the display-mode menu (user's request):
 #   powershell -File tools\pcsx2_capture.ps1 -Keys "12:Down","14:Cross" -Shots 13,20
 $root = Split-Path -Parent $PSScriptRoot
@@ -78,6 +79,17 @@ function Get-GsWindow($proc) {
     }
     return $best
 }
+function Send-PineSaveState([byte]$slot) {
+    # PINE (inis\PCSX2.ini PINESlot 28011 = TCP port): MsgSaveState is opcode 9 + slot; the reply's 5th byte is 0 on OK.
+    try {
+        $c = New-Object System.Net.Sockets.TcpClient("127.0.0.1", 28011); $s = $c.GetStream()
+        $msg = [byte[]](6, 0, 0, 0, 9, $slot); $s.Write($msg, 0, $msg.Length)
+        $buf = New-Object byte[] 5; $n = 0
+        while ($n -lt 5) { $r = $s.Read($buf, $n, 5 - $n); if ($r -le 0) { break }; $n += $r }
+        $c.Close()
+        if ($n -eq 5 -and $buf[4] -eq 0) { "ok" } else { "failed (reply $n bytes)" }
+    } catch { "failed ($($_.Exception.Message))" }
+}
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 # Window title names the run (user, 2026-10-28): "PCSX2 - Grok: <run>" / "PCSX2 - Claude: <run>"; re-applied at
 # every event since PCSX2 sets its own title.
@@ -98,6 +110,11 @@ foreach ($e in $events) {
     $w = Get-GsWindow $p
     if (-not $w) { "no window at $($e.t) s"; continue }
     [void][Pcsx2CaptureWin]::SetWindowText($w.h, $windowTitle)
+    if ($e.kind -eq "key" -and $e.key -match '^State(\d)$') {
+        # "<s>:State<n>": savestate to slot n through PINE (no key press); lands in external\pcsx2\sstates.
+        "savestate slot $($Matches[1]) at {0:N1} s: $(Send-PineSaveState ([byte]$Matches[1]))" -f ((Get-Date) - $t0).TotalSeconds
+        continue
+    }
     if ($e.kind -eq "key") {
         if (-not $vk.ContainsKey($e.key)) { "unknown key $($e.key)"; continue }
         # Posted key messages don't reach LilyPad here, so send a real key press with PCSX2 briefly in front.

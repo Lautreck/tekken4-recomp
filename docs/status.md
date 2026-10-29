@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-10-29 00:50 (session 7)_
+_Last updated: 2026-10-29 03:26 (session 7)_
 
 ## Resume here
 To continue, open Claude Code in this folder and say: "read docs/status.md and continue".
@@ -83,8 +83,28 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
     (EE cid 0 -> IOP 0x4f4f4 -> cid 2/1 replies) and stays in wt-music, but the wav is unchanged in all 8 runs
     (music4-8 even went silent). New lead from music4-7/stderr.txt: the IOP reads the music from disc (sceCdRead
     64 sectors alternately into 0xc8000 / 0x108000, 7 reads then stops) but the SPU ring 0xc7000 only ever gets
-    silent ADPCM loop blocks (refills nonzero=3). **music-5 running** (docs/ai/prompts/music-5.md, 300 turns,
-    notes required as it goes): find the copy disc buffer -> ring and its gate.
+    silent ADPCM loop blocks (refills nonzero=3). music-5 (300 turns) also ran out of turns: no final JSON,
+    notes logs/grok/music5-notes.md (hand disassembly of zsiopdrv, no fix).
+  - **MUSIC FIXED = patches 35 + 36** (fork ac23927, 058b604; main override delivers user SIF cmds), found by
+    diffing IOP RAM against PCSX2 (new: `tools\pcsx2_capture.ps1 "<s>:State<n>"` = PINE savestate, no key press;
+    `TEKKEN4_IOP_DUMP=<dir>` = our IOP RAM every 2 s; `python -I tools\iop_diff.py <ours.bin> <state.p2s>` finds
+    zsiopdrv's relocated copy in PCSX2 (delta 0x7af30; PCSX2 also keeps the raw IRX with unrelocated pointers)).
+    Root cause: zsiopdrv init (0x48804) does sceCdSearchFile of \TEKKEN\DATA.BIN and \TEKKEN\DATA2.BIN; our IOP
+    HLE only knew DATA.BIN (hard-coded), so 0x521d4 = -18097, init returned 2 into 0x52100 and that flag gates
+    every stream start (0x4ab74, 0x4ac20, 0x3000 handler, opcodes). PCSX2: 0x52100 = 0, 0x521d4 = 0x141803.
+    Patch 35 walks the image's ISO9660 directories (DATA2.BIN -> LBN 1316867). Patch 36 = Grok's music-3/4
+    emulation without diagnostics: SPU2 IRQ on IRQA cross (handler per cross, enable bit left set: NOT verified
+    against PCSX2), sifcmd SetCmdBuffer/AddCmdHandler + deliverEeUserSifCmd, sceSifSendCmd EABI t0/t1 payload
+    to IOP RAM, TEKKEN4_IOP_DUMP. Grok's double iWakeupThread hack (game address 0x521c8 in the global IOP) is
+    NOT taken: not needed. Patch 35 alone gives no music (logs/music_searchfile1); 35 + 36 does.
+    Evidence (logs/music_port1/2): music-stream reads lsn 1070970.. / 1112416.. into IOP 0x160000-0x1a0000
+    (never before); char select rms 0.23-0.39 continuous (was 0.00-0.08 with gaps), fight 0.15-0.31 continuous;
+    airport fight 60 fps (s70-99, GS ~150 ms); sound off still reaches the fight at 60 (music_port_nosound);
+    tests 482/482. Mode select (40-43 s) is 0.05 in both old and new runs: check by ear whether it has music.
+    Note: in 2 of 5 runs today run_fixed_fight picked laboratory instead of airport (stage keys timing).
+    Main-tree override: Grok's music-5 WIP (logSoundQueue, AUDIO_STATS logs) saved to
+    logs/grok/music5_overrides_wip.cpp, replaced by the clean delivery (guarded by PS2X_IOP_HAS_USER_SIF_CMD).
+    wt-music still holds Grok's full WIP + this fix + the dump (not built by default).
   - (earlier) **Grok running:** **music-4** (docs/ai/prompts/music-4.md, wt-music, 300 turns): music-3 refuted the wrong
     thing; the SDK copies the sceSifSendCmd extra payload by SIF DMA, and the chain is a handshake (EE cid 0 ->
     IOP handler 0x4f4f4 -> 0x49620 -> IOP cid 2 reply -> EE clears guard 0x1ccd400). Broken links: RPC.cpp

@@ -1,0 +1,513 @@
+diff --git a/ps2xIOP/include/ps2x/iop/iop_host.h b/ps2xIOP/include/ps2x/iop/iop_host.h
+index acbd6d8..cf1e050 100644
+--- a/ps2xIOP/include/ps2x/iop/iop_host.h
++++ b/ps2xIOP/include/ps2x/iop/iop_host.h
+@@ -153,4 +153,10 @@ namespace ps2x::iop
+     // GetSreg/SetSreg (ordinals 6/7) read the same store. zsiopdrv spins until register 31 is non-zero.
+     void setSifSoftwareRegister(uint32_t index, uint32_t value) noexcept;
+     uint32_t sifSoftwareRegister(uint32_t index) noexcept;
++
++    // EE sceSifSendCmd with a user cid (bit 31 clear): runs the handler the IOP registered with
++    // sceSifAddCmdHandler on a copy of the 16..112-byte packet. The extra payload must already be in IOP RAM.
++    // False when no handler is registered for that cid.
++#define PS2X_IOP_HAS_USER_SIF_CMD 1
++    bool deliverEeUserSifCmd(uint32_t commandId, const void *packet, size_t packetSize) noexcept;
+ }
+diff --git a/ps2xIOP/src/emulator/core/sound_engine.cpp b/ps2xIOP/src/emulator/core/sound_engine.cpp
+index 1015b3c..5c694d8 100644
+--- a/ps2xIOP/src/emulator/core/sound_engine.cpp
++++ b/ps2xIOP/src/emulator/core/sound_engine.cpp
+@@ -97,6 +97,7 @@ namespace ps2x::iop::detail
+         m_cores = {};
+         m_stream = {};
+         m_streamHalf = {};
++        m_irqLatched = {};
+         for (Reverb &reverb : m_reverb)
+         {
+             reverb.enabled = false;
+@@ -120,6 +121,7 @@ namespace ps2x::iop::detail
+         c = Core{};
+         c.voices = voices;
+         m_stream[core & 1u] = {};
++        m_irqLatched[core & 1u] = false;
+     }
+ 
+     // ---- parameters ----------------------------------------------------------------------------------------------
+@@ -667,16 +669,19 @@ namespace ps2x::iop::detail
+         v.playBlock = block;
+         v.playStarted = true;
+         // SPU2 IRQ when the block just decoded contains IRQA and the core's IRQ enable (attr bit 6) is on.
+-        // The handler itself is invoked from iop_emulator; this only counts crossings for TEKKEN4_SOUND_TRACE.
+-        if (soundTrace() && (c.attr & 0x0040u) != 0u && c.irqa >= block && c.irqa < block + 8u)
++        // advanceTo stops on the latch; iop_emulator runs sceSdSetSpu2IntrHandler before the next sample.
++        if ((c.attr & 0x0040u) != 0u && c.irqa >= block && c.irqa < block + 8u)
+         {
+-            TraceState &state = traceState();
+-            ++state.irqHits;
+-            if (state.irqHits <= 8u)
++            const uint32_t core = static_cast<uint32_t>(&c - m_cores.data());
++            if (core < 2u)
++                m_irqLatched[core] = true;
++            if (soundTrace())
+             {
+-                const uint32_t core = static_cast<uint32_t>(&c - m_cores.data());
+-                std::fprintf(stderr, "[snd-trace] irq-cross core=%u voice=%u irqa=%x block=%x\n", core, index, c.irqa,
+-                             block);
++                TraceState &state = traceState();
++                ++state.irqHits;
++                if (state.irqHits <= 8u)
++                    std::fprintf(stderr, "[snd-trace] irq-cross core=%u voice=%u irqa=%x block=%x\n", core, index,
++                                 c.irqa, block);
+             }
+         }
+     }
+@@ -925,9 +930,32 @@ namespace ps2x::iop::detail
+         m_maxAdvance = std::max<uint64_t>(m_maxAdvance, iopCycle - m_lastCycle);
+         if (soundTrace())
+             traceState().maxAdvance = std::max(traceState().maxAdvance, samples);
+-        for (uint64_t i = 0; i < samples; ++i)
++        uint64_t done = 0;
++        while (done < samples)
++        {
+             step();
+-        m_lastCycle += samples * CyclesPerSample;
++            ++done;
++            // One IRQ per stop. The handler re-enables bit 6 before the next advanceTo continues.
++            if (m_irqLatched[0] || m_irqLatched[1])
++                break;
++        }
++        m_lastCycle += done * CyclesPerSample;
++    }
++
++    uint32_t SoundEngine::takeSpu2Irq() noexcept
++    {
++        uint32_t bits = 0;
++        for (uint32_t core = 0; core < 2u; ++core)
++        {
++            if (!m_irqLatched[core])
++                continue;
++            m_irqLatched[core] = false;
++            // Leave SD_ENABLE_IRQ set. freesd clears it and the driver re-arms; this driver re-arms
++            // a few times during the prime then leaves the bit clear, and the streaming voices go quiet.
++            // Keeping the enable lets the same handler run on every later cross.
++            bits |= 1u << core;
++        }
++        return bits;
+     }
+ 
+     size_t SoundEngine::pendingFrames() const
+diff --git a/ps2xIOP/src/emulator/core/sound_engine.h b/ps2xIOP/src/emulator/core/sound_engine.h
+index 305bd05..2556cfd 100644
+--- a/ps2xIOP/src/emulator/core/sound_engine.h
++++ b/ps2xIOP/src/emulator/core/sound_engine.h
+@@ -61,7 +61,13 @@ namespace ps2x::iop::detail
+         [[nodiscard]] uint32_t streamPosition(uint32_t core) const { m_lastPollCycle = m_lastCycle; return m_stream[core & 1u].position; }
+         [[nodiscard]] bool takeStreamHalf(uint32_t core) noexcept; // a half was consumed since the last call
+ 
+-        // time: one stereo sample every CyclesPerSample IOP cycles
++        // freesd Spu2Interrupt core bits: bit0 = core 0, bit1 = core 1. Clears the latches. Does not clear
++        // SD_ENABLE_IRQ; this title's handler stops re-arming after the prime if the library clears it.
++        // 0 if no IRQA cross happened since the previous take.
++        [[nodiscard]] uint32_t takeSpu2Irq() noexcept;
++
++        // time: one stereo sample every CyclesPerSample IOP cycles. Stops after the sample that latches an SPU2 IRQ
++        // so the caller can run the handler before the next sample.
+         void advanceTo(uint64_t iopCycle);
+ 
+         // stereo samples produced so far (producer: IOP thread, consumer: host audio thread)
+@@ -127,6 +133,7 @@ namespace ps2x::iop::detail
+         std::array<Reverb, 2> m_reverb{};
+         std::array<StreamRing, 2> m_stream{};
+         std::array<bool, 2> m_streamHalf{};
++        std::array<bool, 2> m_irqLatched{};
+         std::vector<int16_t> m_output;
+         mutable std::mutex m_outputMutex;
+         double m_resamplePhase = 0.0; // drainOutput: fractional read position when playing back faster
+diff --git a/ps2xIOP/src/emulator/iop_emulator.cpp b/ps2xIOP/src/emulator/iop_emulator.cpp
+index 1a7198e..e11aa16 100644
+--- a/ps2xIOP/src/emulator/iop_emulator.cpp
++++ b/ps2xIOP/src/emulator/iop_emulator.cpp
+@@ -21,11 +21,14 @@
+ #include <algorithm>
+ #include <array>
+ #include <cctype>
++#include <chrono>
++#include <cstdio>
+ #include <cstdlib>
+ #include <map>
+ #include <optional>
+ #include <span>
+ #include <sstream>
++#include <string>
+ #include <utility>
+ #include <vector>
+ 
+@@ -33,6 +36,8 @@ namespace ps2x::iop::detail
+ {
+     namespace
+     {
++        // The emulator deliverEeUserSifCmd reaches (one per process, like the SIF software registers).
++        IopEmulator *g_userCmdEmulator = nullptr;
+         constexpr uint32_t kRamSize = IopMemory::RamSize;
+         constexpr uint32_t kKernelHeapBase = IopMemory::HeapBase;
+         constexpr uint32_t kKernelHeapLimit = IopMemory::HeapLimit;
+@@ -551,13 +556,23 @@ namespace ps2x::iop::detail
+                 ret(0u);
+                 return true;
+             }
+-            case 22:
+-            case 27:
++            case 22: // sceSdSetIRQCallback(cb): freesd calls cb(0) only when no ordinal-27 handler is set
++            {
++                const uint32_t old = m_libsd.irqCallback;
++                m_libsd.irqCallback = a0;
++                m_libsd.irqCallbackGp = cpu.gpr[28];
++                ret(old);
++                return true;
++            }
++            case 27: // sceSdSetSpu2IntrHandler(handler, arg): handler(core_bit, arg)
++            {
++                const uint32_t old = m_libsd.spu2Handler[0];
+                 m_libsd.spu2Handler[0] = a0;
+                 m_libsd.spu2Arg[0] = a1;
+                 m_libsd.spu2Gp[0] = cpu.gpr[28];
+-                ret(0u);
++                ret(old);
+                 return true;
++            }
+             default:
+             {
+                 static uint32_t seen = 0u;
+@@ -574,11 +589,35 @@ namespace ps2x::iop::detail
+             }
+         }
+ 
++        // SPU2 IRQ: advanceTo stops on the sample that crosses a core's IRQA. Service every cross in this slice
++        // (cap 32) so a half-buffer stream is refilled before its voice loops over stale samples.
++        void serviceSpu2Irq()
++        {
++            for (int guard = 0; guard < 32; ++guard)
++            {
++                m_sound.advanceTo(totalCycles);
++                const uint32_t coreBit = m_sound.takeSpu2Irq();
++                if (coreBit == 0u)
++                    return;
++                const bool intrHandler = m_libsd.spu2Handler[0] != 0u;
++                const uint32_t handler = intrHandler ? m_libsd.spu2Handler[0] : m_libsd.irqCallback;
++                if (handler == 0u)
++                    continue;
++                m_inSpu2Irq = true;
++                if (intrHandler)
++                    (void)callFunction(handler, coreBit, m_libsd.spu2Arg[0], 0u, 0u, m_libsd.spu2Gp[0]);
++                else
++                    (void)callFunction(handler, 0u, 0u, 0u, 0u, m_libsd.irqCallbackGp);
++                m_inSpu2Irq = false;
++            }
++        }
++
+         void drainMixedAudio()
+         {
+-            if (!soundRouteOn())
++            // The IRQ handler's own libsd calls can land here: no nested drain.
++            if (!soundRouteOn() || m_inSpu2Irq)
+                 return;
+-            m_sound.advanceTo(totalCycles);
++            serviceSpu2Irq();
+             int16_t block[1024 * 2];
+             for (;;)
+             {
+@@ -896,6 +935,20 @@ namespace ps2x::iop::detail
+             return cpu.gpr[2];
+         }
+ 
++        // EE sceSifSendCmd with a user cid: the IOP sifcmd handler runs with the packet (its extra payload is
++        // already in IOP RAM).
++        bool deliverUserSifCmd(uint32_t commandId, const void *packet, uint32_t packetSize)
++        {
++            uint32_t address = 0u;
++            uint32_t handler = 0u;
++            uint32_t harg = 0u;
++            uint32_t gp = 0u;
++            if (!rpc.stageUserCommand(commandId, packet, packetSize, address, handler, harg, gp))
++                return false;
++            (void)callFunction(handler, address, harg, 0u, 0u, gp);
++            return true;
++        }
++
+         uint32_t executeGuestFunction(uint32_t address,
+                                       uint32_t a0,
+                                       uint32_t a1,
+@@ -1177,12 +1230,15 @@ namespace ps2x::iop::detail
+             std::array<uint32_t, 2> spu2Handler{};
+             std::array<uint32_t, 2> spu2Gp{};
+             std::array<uint32_t, 2> spu2Arg{};
++            uint32_t irqCallback = 0;
++            uint32_t irqCallbackGp = 0;
+             std::array<bool, 2> blockActive{};
+             std::array<uint32_t, 2> blockBuffer{};
+             std::array<uint32_t, 2> blockSize{};
+         };
+         LibsdState m_libsd{};
+         SoundEngine m_sound;
++        bool m_inSpu2Irq = false;
+         int m_soundRoute = -1;
+         // TEKKEN4_IOP_IDLE_SKIP=0 turns the idle-skip cache off (paired speed runs with one exe).
+         bool m_idleCacheEnabled = []
+@@ -1218,9 +1274,14 @@ namespace ps2x::iop::detail
+     IopEmulator::IopEmulator(IopHost &host)
+         : m_impl(std::make_unique<Impl>(host))
+     {
++        g_userCmdEmulator = this;
+     }
+ 
+-    IopEmulator::~IopEmulator() = default;
++    IopEmulator::~IopEmulator()
++    {
++        if (g_userCmdEmulator == this)
++            g_userCmdEmulator = nullptr;
++    }
+ 
+     void IopEmulator::reset()
+     {
+@@ -1244,6 +1305,28 @@ namespace ps2x::iop::detail
+ 
+     void IopEmulator::runEeCycles(uint64_t eeCycles) noexcept
+     {
++        // TEKKEN4_IOP_DUMP=<dir>: IOP RAM to <dir>/iop_<s>s.bin every 2 s of wall time, to diff against the
++        // iopMemory.bin of a PCSX2 savestate taken on the same screen (tools\iop_diff.py).
++        static const char *dumpDir = std::getenv("TEKKEN4_IOP_DUMP");
++        if (dumpDir && dumpDir[0])
++        {
++            using Clock = std::chrono::steady_clock;
++            static const Clock::time_point start = Clock::now();
++            static int64_t nextSecond = 2;
++            const int64_t now = std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - start).count();
++            if (now >= nextSecond)
++            {
++                std::vector<uint8_t> ram(kRamSize);
++                const std::string path = std::string(dumpDir) + "/iop_" + std::to_string(now) + "s.bin";
++                if (m_impl->memory.readRam(0, ram.data(), ram.size()))
++                    if (FILE *f = std::fopen(path.c_str(), "wb"))
++                    {
++                        std::fwrite(ram.data(), 1, ram.size(), f);
++                        std::fclose(f);
++                    }
++                nextSecond = now + 2;
++            }
++        }
+         const uint64_t total = m_impl->eeCycleCarry + eeCycles;
+         const uint64_t iopCycles = total / 8u;
+         m_impl->eeCycleCarry = total % 8u;
+@@ -1256,6 +1339,11 @@ namespace ps2x::iop::detail
+         return m_impl->rpc.handleRpc(request, *m_impl);
+     }
+ 
++    bool IopEmulator::deliverUserSifCmd(uint32_t commandId, const void *packet, uint32_t packetSize)
++    {
++        return m_impl->deliverUserSifCmd(commandId, packet, packetSize);
++    }
++
+     bool IopEmulator::hasRpcServer(uint32_t sid) const noexcept
+     {
+         return m_impl->rpc.hasServer(sid);
+@@ -1370,4 +1458,11 @@ namespace ps2x::iop
+     {
+         return index < g_sifSoftwareRegisters.size() ? g_sifSoftwareRegisters[index] : 0u;
+     }
++
++    bool deliverEeUserSifCmd(uint32_t commandId, const void *packet, size_t packetSize) noexcept
++    {
++        if (detail::g_userCmdEmulator == nullptr || packet == nullptr || packetSize < 16u || packetSize > 112u)
++            return false;
++        return detail::g_userCmdEmulator->deliverUserSifCmd(commandId, packet, static_cast<uint32_t>(packetSize));
++    }
+ }
+diff --git a/ps2xIOP/src/emulator/iop_emulator.h b/ps2xIOP/src/emulator/iop_emulator.h
+index 070c473..912d8e7 100644
+--- a/ps2xIOP/src/emulator/iop_emulator.h
++++ b/ps2xIOP/src/emulator/iop_emulator.h
+@@ -26,6 +26,7 @@ namespace ps2x::iop::detail
+         [[nodiscard]] bool stopModule(int32_t moduleId, int32_t *result);
+         void runEeCycles(uint64_t eeCycles) noexcept;
+         [[nodiscard]] RpcResult handleRpc(const RpcRequest &request);
++        [[nodiscard]] bool deliverUserSifCmd(uint32_t commandId, const void *packet, uint32_t packetSize);
+         [[nodiscard]] bool hasRpcServer(uint32_t sid) const noexcept;
+         void onSifTransfer(const SifTransfer &transfer);
+ 
+diff --git a/ps2xIOP/src/emulator/services/iop_rpc.cpp b/ps2xIOP/src/emulator/services/iop_rpc.cpp
+index cf4fdc6..89d2f00 100644
+--- a/ps2xIOP/src/emulator/services/iop_rpc.cpp
++++ b/ps2xIOP/src/emulator/services/iop_rpc.cpp
+@@ -21,6 +21,10 @@ namespace ps2x::iop::detail
+     void IopRpcBridge::reset()
+     {
+         m_servers.clear();
++        m_userCmds = {};
++        m_cmdBuffer = 0u;
++        m_cmdBufferCount = 0u;
++        m_userPacket = 0u;
+         m_nextDmaId = 1u;
+         m_sifInitialized = false;
+     }
+@@ -143,15 +147,38 @@ namespace ps2x::iop::detail
+         case 5:
+         case 6:
+         case 7:
+-        case 8:
+         case 9:
+-        case 10:
+         case 11:
+         case 14: // InitRpc
+         case 15:
+         case 16:
+             setV0(0);
+             return true;
++        case 8: // sceSifSetCmdBuffer(buffer, count): the user-command handler table, returns the previous one
++        {
++            const uint32_t previous = m_cmdBuffer;
++            m_cmdBuffer = cpu.gpr[4];
++            m_cmdBufferCount = cpu.gpr[5];
++            setV0(previous);
++            return true;
++        }
++        case 10: // sceSifAddCmdHandler(cid, handler, harg)
++        {
++            const uint32_t cid = cpu.gpr[4];
++            const uint32_t handler = cpu.gpr[5];
++            const uint32_t harg = cpu.gpr[6];
++            if ((cid & 0x80000000u) == 0u && cid < m_userCmds.size())
++            {
++                m_userCmds[cid] = UserCmd{handler, harg, cpu.gpr[28]};
++                if (m_cmdBuffer != 0u && cid < m_cmdBufferCount)
++                {
++                    m_memory.write32(m_cmdBuffer + cid * 8u, handler);
++                    m_memory.write32(m_cmdBuffer + cid * 8u + 4u, harg);
++                }
++            }
++            setV0(0);
++            return true;
++        }
+         case 12: // sceSifSendCmd
+         case 13: // isceSifSendCmd
+         {
+@@ -346,4 +373,33 @@ namespace ps2x::iop::detail
+         const auto server = m_servers.find(sid);
+         return server != m_servers.end() && server->second.function != 0u;
+     }
++
++    bool IopRpcBridge::stageUserCommand(uint32_t commandId,
++                                        const void *packet,
++                                        uint32_t packetSize,
++                                        uint32_t &packetAddress,
++                                        uint32_t &handler,
++                                        uint32_t &harg,
++                                        uint32_t &gp)
++    {
++        packetAddress = 0u;
++        handler = 0u;
++        harg = 0u;
++        gp = 0u;
++        if ((commandId & 0x80000000u) != 0u || commandId >= m_userCmds.size() || packet == nullptr ||
++            packetSize < 16u || packetSize > 112u)
++            return false;
++        const UserCmd &cmd = m_userCmds[commandId];
++        if (cmd.handler == 0u)
++            return false;
++        if (m_userPacket == 0u)
++            m_userPacket = m_memory.allocate(128u, 16u);
++        if (m_userPacket == 0u || !m_memory.writeRam(m_userPacket, packet, packetSize))
++            return false;
++        packetAddress = m_userPacket;
++        handler = cmd.handler;
++        harg = cmd.harg;
++        gp = cmd.gp;
++        return true;
++    }
+ }
+diff --git a/ps2xIOP/src/emulator/services/iop_rpc.h b/ps2xIOP/src/emulator/services/iop_rpc.h
+index a4286ba..41264c5 100644
+--- a/ps2xIOP/src/emulator/services/iop_rpc.h
++++ b/ps2xIOP/src/emulator/services/iop_rpc.h
+@@ -2,6 +2,7 @@
+ 
+ #include "ps2x/iop/iop_types.h"
+ 
++#include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <unordered_map>
+@@ -55,6 +56,16 @@ namespace ps2x::iop::detail
+         [[nodiscard]] bool hasServer(uint32_t sid) const noexcept;
+         [[nodiscard]] size_t serverCount() const noexcept { return m_servers.size(); }
+ 
++        // EE -> IOP user command (cid bit 31 clear): copies the packet into an IOP scratch block and returns the
++        // handler sceSifAddCmdHandler registered for that cid. False when the cid has no handler.
++        [[nodiscard]] bool stageUserCommand(uint32_t commandId,
++                                            const void *packet,
++                                            uint32_t packetSize,
++                                            uint32_t &packetAddress,
++                                            uint32_t &handler,
++                                            uint32_t &harg,
++                                            uint32_t &gp);
++
+     private:
+         struct RpcServer
+         {
+@@ -68,10 +79,21 @@ namespace ps2x::iop::detail
+             uint32_t queue = 0;
+         };
+ 
++        struct UserCmd
++        {
++            uint32_t handler = 0;
++            uint32_t harg = 0;
++            uint32_t gp = 0;
++        };
++
+         IopHost &m_host;
+         IopMemory &m_memory;
+         IopKernel &m_kernel;
+         std::unordered_map<uint32_t, RpcServer> m_servers;
++        std::array<UserCmd, 64> m_userCmds{};
++        uint32_t m_cmdBuffer = 0;
++        uint32_t m_cmdBufferCount = 0;
++        uint32_t m_userPacket = 0;
+         uint32_t m_nextDmaId = 1u;
+         bool m_sifInitialized = false;
+     };
+diff --git a/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp b/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp
+index 07fcd29..19a5700 100644
+--- a/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp
+@@ -974,16 +974,23 @@ namespace ps2_syscalls
+         uint32_t packetAddr = getRegU32(ctx, 5);
+         uint32_t packetSize = getRegU32(ctx, 6);
+         uint32_t srcExtra = getRegU32(ctx, 7);
++        // ee-gcc EABI passes args 5 and 6 (IOP destination, size of the extra payload) in t0/t1, not on the
++        // stack. The payload goes to IOP RAM; the caller (a game override) then runs the IOP handler.
++        const uint32_t destExtra = getRegU32(ctx, 8);
++        const uint32_t sizeExtra = getRegU32(ctx, 9);
+ 
+-        uint32_t sp = getRegU32(ctx, 29);
+-        uint32_t destExtra = 0;
+-        uint32_t sizeExtra = 0;
+-        readStackU32(rdram, sp, 0x10, destExtra);
+-        readStackU32(rdram, sp, 0x14, sizeExtra);
+-
+-        if (sizeExtra > 0 && srcExtra && destExtra)
++        if (sizeExtra > 0u && srcExtra != 0u && destExtra != 0u)
+         {
+-            rpcCopyToRdram(rdram, destExtra, srcExtra, sizeExtra);
++            const uint8_t *src = getConstMemPtr(rdram, srcExtra);
++            const uint8_t *last = getConstMemPtr(rdram, srcExtra + sizeExtra - 1u);
++            const bool span = src && last && last >= src &&
++                              static_cast<size_t>(last - src) + 1u == static_cast<size_t>(sizeExtra);
++            if (!span || !runtime || !runtime->isIopMemoryRange(destExtra, sizeExtra) ||
++                !runtime->writeIopMemory(destExtra, src, sizeExtra))
++            {
++                setReturnS32(ctx, 0);
++                return;
++            }
+         }
+ 
+         static int logCount = 0;

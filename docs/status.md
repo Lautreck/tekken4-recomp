@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-10-29 08:26 (session 7)_
+_Last updated: 2026-10-29 08:32 (session 7)_
 
 ## Resume here
 To continue, open Claude Code in this folder and say: "read docs/status.md and continue".
@@ -113,7 +113,14 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
     run_capture.ps1 -StagePick (on-demand frames via TEKKEN4_FRAME_SHOT_POLL, Cross >= 7 s after the card
     settles, exit 2 on failure). Claude's 4 runs: airport/underground/beach right, arena exit 2 because the TIMED
     menu keys before the card picked TEKKEN FORCE (open loop; next: closed-loop menu navigation). Launchers now set
-    PS2X_DEBUG_PANEL=0 instead of pressing F1. **spu2-irq running since 07:47** (pid 122448).
+    PS2X_DEBUG_PANEL=0 instead of pressing F1.
+    **spu2-irq DONE = patch 41** (fork 9b9ccfc, Grok final JSON conf 0.86, reviewed): Sony libsd clears ATTR bit 6
+    before the user handler (PCSX2 fires only while enabled); zsiopdrv's worker re-arms after moving IRQA, so
+    serviceSpu2Irq now runs ready IOP threads (<= 24 slices, same steps as the scheduler loop, called after it)
+    until the core is re-armed. Patch 36's 'leave enable set' workaround is gone. Claude's check
+    (logs/spu2irq_claude, _claude2): music continuous, fight 60/60 s69-109 (TEKKEN4_HUD_LOG), tests 482/482.
+    Note: stdout.txt of a killed run loses its buffered tail (perf lines stopped at s62); use TEKKEN4_HUD_LOG.
+    Grok queue now empty.
   - **GRAPHICS GOAL (user 2026-10-29: "all" of higher resolution, widescreen 16:9, smoothing/filtering, in-game
     settings menu).** Survey (subagent): PS2X_GS_HW_SCALE already scales the GS hw backend (createTarget, vertices,
     viewport/scissor), but >1x breaks after it: rtUploadTarget refuses scale != 1 (movie upload goes black),

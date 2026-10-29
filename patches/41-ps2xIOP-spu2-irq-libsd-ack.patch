@@ -1,0 +1,165 @@
+diff --git a/ps2xIOP/src/emulator/core/sound_engine.cpp b/ps2xIOP/src/emulator/core/sound_engine.cpp
+index 5c694d8..1ff54f9 100644
+--- a/ps2xIOP/src/emulator/core/sound_engine.cpp
++++ b/ps2xIOP/src/emulator/core/sound_engine.cpp
+@@ -935,7 +935,7 @@ namespace ps2x::iop::detail
+         {
+             step();
+             ++done;
+-            // One IRQ per stop. The handler re-enables bit 6 before the next advanceTo continues.
++            // One IRQ per stop. libsd clears bit 6; serviceSpu2Irq runs the woken thread before more samples.
+             if (m_irqLatched[0] || m_irqLatched[1])
+                 break;
+         }
+@@ -950,9 +950,9 @@ namespace ps2x::iop::detail
+             if (!m_irqLatched[core])
+                 continue;
+             m_irqLatched[core] = false;
+-            // Leave SD_ENABLE_IRQ set. freesd clears it and the driver re-arms; this driver re-arms
+-            // a few times during the prime then leaves the bit clear, and the streaming voices go quiet.
+-            // Keeping the enable lets the same handler run on every later cross.
++            // Sony libsd Spu2Interrupt: ATTR &= ~0x0040 before the user handler. The driver sets the bit
++            // again with sceSdSetCoreAttr(SD_CORE_IRQ_ENABLE, 1). Leaving it set skipped that re-arm.
++            m_cores[core].attr = static_cast<uint16_t>(m_cores[core].attr & ~0x0040u);
+             bits |= 1u << core;
+         }
+         return bits;
+diff --git a/ps2xIOP/src/emulator/core/sound_engine.h b/ps2xIOP/src/emulator/core/sound_engine.h
+index 2556cfd..dd55a90 100644
+--- a/ps2xIOP/src/emulator/core/sound_engine.h
++++ b/ps2xIOP/src/emulator/core/sound_engine.h
+@@ -61,9 +61,9 @@ namespace ps2x::iop::detail
+         [[nodiscard]] uint32_t streamPosition(uint32_t core) const { m_lastPollCycle = m_lastCycle; return m_stream[core & 1u].position; }
+         [[nodiscard]] bool takeStreamHalf(uint32_t core) noexcept; // a half was consumed since the last call
+ 
+-        // freesd Spu2Interrupt core bits: bit0 = core 0, bit1 = core 1. Clears the latches. Does not clear
+-        // SD_ENABLE_IRQ; this title's handler stops re-arming after the prime if the library clears it.
+-        // 0 if no IRQA cross happened since the previous take.
++        // libsd Spu2Interrupt core bits: bit0 = core 0, bit1 = core 1. Clears the latches and ATTR bit 6
++        // (SD_ENABLE_IRQ). Sony libsd does that before the user handler; the driver re-arms with
++        // sceSdSetCoreAttr(SD_CORE_IRQ_ENABLE). 0 if no IRQA cross happened since the previous take.
+         [[nodiscard]] uint32_t takeSpu2Irq() noexcept;
+ 
+         // time: one stereo sample every CyclesPerSample IOP cycles. Stops after the sample that latches an SPU2 IRQ
+diff --git a/ps2xIOP/src/emulator/iop_emulator.cpp b/ps2xIOP/src/emulator/iop_emulator.cpp
+index e11aa16..521caf2 100644
+--- a/ps2xIOP/src/emulator/iop_emulator.cpp
++++ b/ps2xIOP/src/emulator/iop_emulator.cpp
+@@ -417,6 +417,8 @@ namespace ps2x::iop::detail
+                 ret(m_sound.getSwitch(a0));
+                 return true;
+             case 9:
++                if (((a0 >> 8) & 0xFFu) == 0x1Fu)
++                    logLibsdIrq("irqa", a0, a1, cpu.gpr[31]);
+                 m_sound.setAddr(a0, a1);
+                 ret(0u);
+                 return true;
+@@ -424,6 +426,8 @@ namespace ps2x::iop::detail
+                 ret(m_sound.getAddr(a0));
+                 return true;
+             case 11:
++                if ((a0 & ~1u) == 4u)
++                    logLibsdIrq("coreattr", a0, a1, cpu.gpr[31]);
+                 m_sound.setCoreAttr(a0, a1);
+                 ret(0u);
+                 return true;
+@@ -589,8 +593,52 @@ namespace ps2x::iop::detail
+             }
+         }
+ 
+-        // SPU2 IRQ: advanceTo stops on the sample that crosses a core's IRQA. Service every cross in this slice
+-        // (cap 32) so a half-buffer stream is refilled before its voice loops over stale samples.
++        // TEKKEN4_LIBSD_LOG=1: sceSdSetCoreAttr(SD_CORE_IRQ_ENABLE) and sceSdSetAddr(SD_ADDR_IRQA).
++        // Off unless the env is exactly "1". First 48 lines, then every 256th, so a fight log stays bounded.
++        void logLibsdIrq(const char *what, uint32_t entry, uint32_t value, uint32_t ra)
++        {
++            static const bool on = [] {
++                const char *env = std::getenv("TEKKEN4_LIBSD_LOG");
++                return env != nullptr && env[0] == '1' && env[1] == '\0';
++            }();
++            if (!on)
++                return;
++            static uint32_t lines = 0u;
++            static uint32_t attrOn = 0u;
++            static uint32_t attrOff = 0u;
++            static uint32_t irqaN = 0u;
++            if (what[0] == 'c')
++            {
++                if (value != 0u)
++                    ++attrOn;
++                else
++                    ++attrOff;
++            }
++            else
++                ++irqaN;
++            ++lines;
++            if (lines > 48u && (lines % 256u) != 0u)
++                return;
++            std::fprintf(stderr,
++                         "[libsd] %s n=%u entry=%x val=%x ra=%x inirq=%d pump=%d attrOn=%u attrOff=%u irqa=%u\n", what,
++                         lines, entry, value, ra, m_inSpu2Irq && !m_inSpu2Pump ? 1 : 0, m_inSpu2Pump ? 1 : 0, attrOn,
++                         attrOff, irqaN);
++        }
++
++        // True when every core in coreBit has ATTR bit 6 set again.
++        bool irqCoresRearmed(uint32_t coreBit) const
++        {
++            if ((coreBit & 1u) != 0u && m_sound.getCoreAttr(4u) == 0u)
++                return false;
++            if ((coreBit & 2u) != 0u && m_sound.getCoreAttr(5u) == 0u)
++                return false;
++            return true;
++        }
++
++        // SPU2 IRQ: advanceTo stops on the sample that crosses a core's IRQA. takeSpu2Irq clears ATTR bit 6
++        // the way libsd's interrupt does, then the user handler runs. That handler only wakes a worker; the
++        // worker re-arms. Run ready threads before the rest of this catch-up so a long slice cannot play
++        // past the next IRQA with the enable still clear. Cap 32 crosses per slice.
+         void serviceSpu2Irq()
+         {
+             for (int guard = 0; guard < 32; ++guard)
+@@ -601,14 +649,31 @@ namespace ps2x::iop::detail
+                     return;
+                 const bool intrHandler = m_libsd.spu2Handler[0] != 0u;
+                 const uint32_t handler = intrHandler ? m_libsd.spu2Handler[0] : m_libsd.irqCallback;
+-                if (handler == 0u)
++                if (handler != 0u)
++                {
++                    m_inSpu2Irq = true;
++                    if (intrHandler)
++                        (void)callFunction(handler, coreBit, m_libsd.spu2Arg[0], 0u, 0u, m_libsd.spu2Gp[0]);
++                    else
++                        (void)callFunction(handler, 0u, 0u, 0u, 0u, m_libsd.irqCallbackGp);
++                    m_inSpu2Irq = false;
++                }
++                if (irqCoresRearmed(coreBit))
+                     continue;
++                // m_inSpu2Irq stays set so a thread we run here cannot re-enter drainMixedAudio.
+                 m_inSpu2Irq = true;
+-                if (intrHandler)
+-                    (void)callFunction(handler, coreBit, m_libsd.spu2Arg[0], 0u, 0u, m_libsd.spu2Gp[0]);
+-                else
+-                    (void)callFunction(handler, 0u, 0u, 0u, 0u, m_libsd.irqCallbackGp);
++                m_inSpu2Pump = true;
++                for (int slice = 0; slice < 24 && !irqCoresRearmed(coreBit); ++slice)
++                {
++                    IopThread *next = kernel.beginNextReady(totalCycles);
++                    if (next == nullptr)
++                        break;
++                    runCpu(next->cpu, kDefaultSlice);
++                    kernel.endTimeslice(*next, kThreadReturnSentinel);
++                }
++                m_inSpu2Pump = false;
+                 m_inSpu2Irq = false;
++                m_idleValid = false;
+             }
+         }
+ 
+@@ -1239,6 +1304,7 @@ namespace ps2x::iop::detail
+         LibsdState m_libsd{};
+         SoundEngine m_sound;
+         bool m_inSpu2Irq = false;
++        bool m_inSpu2Pump = false;
+         int m_soundRoute = -1;
+         // TEKKEN4_IOP_IDLE_SKIP=0 turns the idle-skip cache off (paired speed runs with one exe).
+         bool m_idleCacheEnabled = []

@@ -20,7 +20,7 @@ US build (SLUS-20328), 2026-10-29:
 | A fight (Story Battle, Kazuya vs Paul), native VU1, OpenGL renderer, full speed (60 fps) | done |
 | Sound incl. background music (real Namco driver on the emulated IOP) | done (WAV-verified; to be confirmed by ear) |
 | Other modes, long sessions | done (QA: all modes, 7-min run) |
-| One-step build from the player's own ISO (no BIOS): toolsbuild_game.ps1 | done (dry-run tested) |
+| One-step build from the player's own ISO (no BIOS): `tools/build_game.ps1` | done (dry-run tested) |
 | Rollback netplay (GGPO-style, UDP, build id, hash checks) | works between two local instances, 0 desyncs; lobby integration next |
 
 The PAL build (`master`) reached all of the above earlier; its log is in [docs/status.md](docs/status.md).

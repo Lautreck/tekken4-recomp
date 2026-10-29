@@ -44,6 +44,32 @@
 // TEKKEN4_RB_MASK          extra hash masks "<addr>:<size>,..." (physical RDRAM, hex ok) on top of the built-in list.
 // TEKKEN4_RB_DUMP          "<frame>,..." writes rb_dump_f<frame>.bin (RDRAM 32 MB) and rb_sched_f<frame>.bin.
 // TEKKEN4_RB_PAGES         "<from>:<to>": also log the per-4-KB page hashes of RDRAM for those frames (rb_pages.log).
+// TEKKEN4_RB_IOPSTATE=1    (phase 3) the IOP is part of every snapshot: re-simulated frames run the IOP like live ones
+//                          (no IOP cut, no gate), the SPU2 output of re-simulated frames is not played. Default in
+//                          netplay; available to test/selfnet/measure (measure: NETHASH lines comparable with netplay).
+// TEKKEN4_RB_FRAMEHASH=0   no full-state hash per boundary in rb_frames.log (h=0; default 0 in netplay: 3 ms a frame).
+//
+// Netplay (phase 3, docs/ROLLBACK_PHASE3.md): two game instances over UDP (transport: tekken4_net.cpp), GGPO-style.
+// TEKKEN4_NET=host:<port> | join:<ip>:<port>  (sets TEKKEN4_RB_MODE=net). The host is P1 (pad port 1), the joiner P2.
+// TEKKEN4_NET_PORT         join: local UDP port (default 0 = any); TEKKEN4_NET_BIND local address
+// TEKKEN4_NET_DELAY        input delay frames, "auto" (default: 1 up to 60 ms round trip, 2 above, 3 above 150, 4 above
+//                          250) or a number; the host's setting decides, the joiner adopts it
+// TEKKEN4_NET_MAXPRED      frames of remote input predicted at most before the frame waits (default 8)
+// TEKKEN4_NET_RBSTART      frames before this run in lockstep (every input confirmed: boot, intro movie); default 600
+// TEKKEN4_NET_HASH_EVERY   desync check: every N-th frame's final state hash (RDRAM, scratchpad, IOP, EE cycle) is
+//                          exchanged (default 30); NETHASH lines in rb_frames.log
+// TEKKEN4_NET_DESYNC_DUMP=1  on a mismatch, net_desync_f<frame>.bin (RDRAM + scratchpad of that frame), both sides
+// TEKKEN4_NET_SIM          in-process network simulator for this side's sends: "lat=<ms>,jitter=<ms>,loss=<%>"
+//                          (one-way; give each side half the round trip)
+// TEKKEN4_NET_LOCALPAD=0   the local player is the script only (TEKKEN4_RB_INPUT/FUZZ on the host, TEKKEN4_RB_INPUT2/
+//                          FUZZ2 on the joiner; frame = the frame the input takes effect in); otherwise script | device
+// TEKKEN4_NET_PAD          the local device: 0 keyboard + first gamepad (default), -1 keyboard, n n-th gamepad
+// TEKKEN4_NET_BUILD        build id (16 hex digits, tools/t4_buildid.py); else t4net_build.txt next to the exe;
+//                          a peer with another id is refused at HELLO
+// TEKKEN4_NET_SEED         the host's session seed (default its session id); mixed into the game's srand unless
+//                          TEKKEN4_RAND_SEED pins it. TEKKEN4_NET_KEY: packet authentication secret
+// TEKKEN4_NET_TIMESYNC=0   no frame-advantage balancing; TEKKEN4_NET_SHOTS="<frame>,...": net_shot_f<frame>.bmp
+// TEKKEN4_NET_END=<frame>  at that frame write the final NETSUMMARY and "NETEND" (the harness closes the games)
 #include "game_overrides.h"
 #include "ps2_log.h"
 #include "ps2_runtime.h"
@@ -55,6 +81,11 @@
 #include "runtime/ps2_rollback_cuts.h"
 #include "Stubs/Pad.h"
 #include "Stubs/SIF.h"
+#if __has_include("tekken4_net.h") && defined(PS2X_ROLLBACK_IOP_STATE)
+#include "tekken4_net.h"
+#define TEKKEN4_NETPLAY 1
+#include <thread>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -82,6 +113,7 @@ namespace tekken4_rollback
         Measure,
         Test,
         SelfNet,
+        Net,
     };
 
     // Hash masks: words that differ between two runs with the same input for reasons outside the simulation, or
@@ -129,6 +161,9 @@ namespace tekken4_rollback
         bool sndForward = false;
         bool sndTrace = false;
         uint64_t netStart = 2100, netDelay = 4, netJitter = 0, netMax = 8;
+        bool iopState = false;   // TEKKEN4_RB_IOPSTATE / netplay: the IOP is in every snapshot
+        bool frameHash = true;   // TEKKEN4_RB_FRAMEHASH
+        uint64_t hashEvery = 0;  // NETHASH every N frames (netplay; measure with TEKKEN4_NET_HASH_EVERY)
     };
 
     struct TestState
@@ -297,8 +332,17 @@ namespace tekken4_rollback
         return scriptedButtons(1, g_net.revealed);
     }
 
+#ifdef TEKKEN4_NETPLAY
+    bool npPadInput(int port, uint16_t &buttons, uint8_t (&axes)[4]); // netplay section below
+    bool npResimulating(uint64_t *liveFrame);
+#endif
+
     bool padProvider(int port, uint16_t &buttons, uint8_t (&axes)[4])
     {
+#ifdef TEKKEN4_NETPLAY
+        if (g_cfg.mode == Mode::Net)
+            return npPadInput(port, buttons, axes);
+#endif
         (void)axes;
         uint16_t pressed = 0;
         if (port == 0)
@@ -723,6 +767,13 @@ namespace tekken4_rollback
             target = g_net.liveFrame;
             tailAllowed = true;
         }
+#ifdef TEKKEN4_NETPLAY
+        else if (g_cfg.mode == Mode::Net)
+        {
+            resim = npResimulating(&target);
+            tailAllowed = true;
+        }
+#endif
         if (!resim)
             return 0;
         uint32_t cuts = g_cfg.cuts;
@@ -951,11 +1002,650 @@ namespace tekken4_rollback
         }
     }
 
+    // ---------------------------------------------------------------- final-state hash (netplay desync check)
+    // What both peers compare: RDRAM, scratchpad, VU0 data, the IOP (RAM, SPU2 RAM, CPU/kernel) and the EE cycle
+    // of a boundary's snapshot. VU1 data memory and GS state are output (phase 2) and left out.
+    struct NetHash
+    {
+        uint64_t total = 0, ram = 0, iop = 0, cycle = 0;
+    };
+
+    uint64_t mix64(uint64_t h)
+    {
+        h ^= h >> 33;
+        h *= 0xff51afd7ed558ccdull;
+        h ^= h >> 33;
+        h *= 0xc4ceb9fe1a85ec53ull;
+        h ^= h >> 33;
+        return h;
+    }
+
+    NetHash netHashOf(const ps2_rollback::Snapshot &snap, uint64_t cycle)
+    {
+        NetHash h;
+        h.ram = ps2_rollback::hashBytes(snap.rdram.data(), snap.rdram.size(), 11);
+        h.ram = mix64(h.ram ^ ps2_rollback::hashBytes(snap.scratchpad.data(), snap.scratchpad.size(), 12));
+        h.ram = mix64(h.ram ^ ps2_rollback::hashBytes(snap.vu0Data.data(), snap.vu0Data.size(), 13));
+#ifdef PS2X_ROLLBACK_IOP_STATE
+        h.iop = ps2_rollback::hashIop(snap);
+#endif
+        h.cycle = cycle;
+        h.total = mix64(h.ram ^ mix64(h.iop + 0x9E3779B97F4A7C15ull) ^ mix64(cycle * 0xD1B54A32D192ED03ull));
+        return h;
+    }
+
+    // measure mode with TEKKEN4_NET_HASH_EVERY: the same NETHASH lines as netplay (a reference run to compare with)
+    void measureNetHash(uint64_t cycle)
+    {
+        if (!g_cfg.hashEvery || g_frame % g_cfg.hashEvery != 0u)
+            return;
+        ps2_rollback::capture(*g_runtime, g_snapshot);
+        const NetHash h = netHashOf(g_snapshot, cycle);
+        std::fprintf(g_log, "NETHASH f=%" PRIu64 " h=%016" PRIx64 " ram=%016" PRIx64 " iop=%016" PRIx64 " cyc=%" PRIu64 "\n",
+                     g_frame, h.total, h.ram, h.iop, h.cycle);
+    }
+
+#ifdef TEKKEN4_NETPLAY
+    // ---------------------------------------------------------------- netplay (phase 3)
+    // GGPO-style loop over the UDP transport (tekken4_net.cpp), T5DR's rb_net.cpp adapted to this driver: per live
+    // boundary f a snapshot, this side's input for f + delay sampled and sent, the peer's inputs that came in checked
+    // against the predictions the frames ran with (prediction = the last confirmed input repeats); the first wrong
+    // frame g -> restore g's snapshot (IOP included), re-simulate g..f-1 with the cuts (draw, present, vu1; last frame
+    // drawn), SPU2 output muted, then the live frame f. Frames before TEKKEN4_NET_RBSTART run in lockstep.
+    constexpr uint32_t kHist = 4096;
+
+    struct NetplayState
+    {
+        bool on = false, started = false, failed = false;
+        int slot = 0;
+        int delay = 0;
+        uint64_t maxPred = 8, rbStart = 600, endFrame = ~0ull;
+        bool timeSync = true, localPad = true, dump = false, ended = false;
+        int padDevice = 0;
+        std::vector<uint64_t> shots;
+        size_t shotNext = 0;
+        t4net::PadInput used[kHist];
+        uint64_t usedTag[kHist]{};
+        bool pred[kHist]{};
+        t4net::PadInput inputs[2];
+        uint64_t checked = 0, hashNext = 0, lastLiveFrame = 0;
+        std::vector<ps2_rollback::Snapshot> ring;
+        std::vector<uint64_t> ringFrame, ringCycle;
+        bool resim = false;
+        uint64_t liveFrame = 0, resimFrom = 0;
+        std::chrono::steady_clock::time_point liveVblank{}, rbT0{};
+        // time sync (T5DR rb_net.cpp ts_correct: trimmed mean of the two lead estimates)
+        static constexpr int kLeadWin = 20;
+        int leadMine[kLeadWin]{}, leadTheirs[kLeadWin]{};
+        int leadN = 0;
+        uint64_t lastCorrection = 0, tsHold = 0;
+        // desync dump: RDRAM + scratchpad of the last hashed frames
+        struct Kept
+        {
+            uint64_t frame = ~0ull;
+            std::vector<uint8_t> ram;
+        };
+        Kept kept[3];
+        int keptNext = 0;
+        // statistics
+        uint64_t liveFrames = 0, rollbacks = 0, resimFrames = 0, maxDepth = 0, depthHist[17]{}, predicted = 0,
+                 mispredicted = 0, stalls = 0, corrections = 0, rebases = 0, captures = 0, hashes = 0;
+        double stallMs = 0, correctionMs = 0, rebaseMs = 0, restoreMs = 0, captureMs = 0, hashMs = 0;
+        std::vector<double> rbCost, frameTimes;
+        std::chrono::steady_clock::time_point lastLive{}, winT0{}, runT0{};
+        uint64_t winFrames = 0, runFrames = 0;
+        double winFps = 0;
+        uint32_t sessionSeed = 0;
+    };
+    NetplayState g_np;
+
+    bool npResimulating(uint64_t *liveFrame)
+    {
+        *liveFrame = g_np.liveFrame;
+        return g_np.resim;
+    }
+
+    // Both ports during a netplay frame: the inputs decided at its boundary (npDecideInputs).
+    bool npPadInput(int port, uint16_t &buttons, uint8_t (&axes)[4])
+    {
+        if (port < 0 || port > 1)
+            return false;
+        const t4net::PadInput &in = g_np.inputs[port];
+        buttons = static_cast<uint16_t>(~in.buttons);
+        for (int i = 0; i < 4; ++i)
+            axes[i] = in.axes[i];
+        return true;
+    }
+
+    void npShift(std::chrono::steady_clock::duration d)
+    {
+        if (d.count() != 0)
+            g_runtime->eeScheduler().shiftHostDeadlines(d);
+    }
+
+    double msSince(std::chrono::steady_clock::time_point t0)
+    {
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    }
+
+    void npSleep(double ms)
+    {
+        const auto end = std::chrono::steady_clock::now() + std::chrono::microseconds(static_cast<int64_t>(ms * 1000.0));
+        while (std::chrono::steady_clock::now() + std::chrono::milliseconds(2) < end)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        while (std::chrono::steady_clock::now() < end)
+            std::this_thread::yield();
+    }
+
+    uint8_t quantizeAxis(uint8_t v)
+    {
+        // three levels: stick noise must not look like a new input (every change would be a misprediction)
+        return v < 0x40u ? 0x00u : v > 0xC0u ? 0xFFu : 0x80u;
+    }
+
+    t4net::PadInput npSampleLocal(uint64_t frame)
+    {
+        t4net::PadInput in;
+        in.buttons = scriptedButtons(g_np.slot, frame);
+        if (g_np.localPad)
+        {
+            uint16_t buttons = 0xFFFFu;
+            uint8_t axes[4]{0x80, 0x80, 0x80, 0x80};
+            if (ps2_stubs::sampleHostPad(g_runtime, g_np.padDevice, buttons, axes))
+            {
+                in.buttons |= static_cast<uint16_t>(~buttons);
+                for (int i = 0; i < 4; ++i)
+                    in.axes[i] = quantizeAxis(axes[i]);
+            }
+        }
+        return in;
+    }
+
+    // The inputs frame g runs with: this side's (decided delay frames ago), the peer's (confirmed, or the last
+    // confirmed one repeated = predicted).
+    void npDecideInputs(uint64_t g)
+    {
+        t4net::PadInput local{}, remote{};
+        (void)t4net::local(static_cast<uint32_t>(g), &local);
+        bool predicted = false;
+        if (!t4net::remote(static_cast<uint32_t>(g), &remote))
+        {
+            predicted = true;
+            const uint32_t rc = t4net::remoteContig();
+            if (rc == 0 || !t4net::remote(rc - 1u, &remote))
+                remote = t4net::PadInput{};
+        }
+        const uint32_t i = static_cast<uint32_t>(g % kHist);
+        g_np.used[i] = remote;
+        g_np.usedTag[i] = g + 1u;
+        g_np.pred[i] = predicted;
+        if (predicted)
+            ++g_np.predicted;
+        g_np.inputs[g_np.slot] = local;
+        g_np.inputs[1 - g_np.slot] = remote;
+    }
+
+    // First frame g < min(f, rc) whose confirmed remote input differs from the prediction it ran with.
+    uint64_t npScan(uint64_t f, uint64_t rc)
+    {
+        const uint64_t upto = std::min(rc, f);
+        uint64_t firstWrong = ~0ull;
+        for (uint64_t g = g_np.checked; g < upto; ++g)
+        {
+            const uint32_t i = static_cast<uint32_t>(g % kHist);
+            if (g_np.usedTag[i] != g + 1u || !g_np.pred[i])
+                continue;
+            t4net::PadInput real;
+            if (!t4net::remote(static_cast<uint32_t>(g), &real))
+                break;
+            if (real != g_np.used[i])
+            {
+                firstWrong = g;
+                ++g_np.mispredicted;
+                break;
+            }
+        }
+        g_np.checked = std::max(g_np.checked, upto);
+        return firstWrong;
+    }
+
+    void npCapture(uint64_t cycle)
+    {
+        const size_t slot = g_frame % g_np.ring.size();
+        const auto t0 = std::chrono::steady_clock::now();
+        ps2_rollback::capture(*g_runtime, g_np.ring[slot]);
+        g_np.ringFrame[slot] = g_frame;
+        g_np.ringCycle[slot] = cycle;
+        g_np.captureMs += msSince(t0);
+        ++g_np.captures;
+    }
+
+    bool npStartRollback(uint64_t f, uint64_t g)
+    {
+        const size_t slot = g % g_np.ring.size();
+        if (g_np.ringFrame[slot] != g)
+        {
+            std::fprintf(g_log, "NET frame %" PRIu64 ": misprediction at %" PRIu64 " out of the snapshot ring (have %" PRIu64
+                                ") -- DESYNC likely\n", f, g, g_np.ringFrame[slot]);
+            return false;
+        }
+        g_np.liveVblank = g_runtime->eeScheduler().nextVblankHostDeadline();
+        g_np.rbT0 = std::chrono::steady_clock::now();
+        ps2_rollback::restore(*g_runtime, g_np.ring[slot]);
+        g_np.restoreMs += msSince(g_np.rbT0);
+        const uint64_t depth = f - g;
+        ++g_np.rollbacks;
+        g_np.maxDepth = std::max(g_np.maxDepth, depth);
+        ++g_np.depthHist[std::min<uint64_t>(depth, 16u)];
+        g_np.resim = true;
+        g_np.liveFrame = f;
+        g_np.resimFrom = g;
+        g_frame = g;
+        ps2_rollback::setIopOutputMuted(true);
+        npDecideInputs(g);
+        return true;
+    }
+
+    void npEndResim()
+    {
+        g_np.resim = false;
+        g_np.rbCost.push_back(msSince(g_np.rbT0));
+        // the restored scheduler carries the host times of the snapshot's day: put the live schedule back
+        const auto now = g_runtime->eeScheduler().nextVblankHostDeadline();
+        if (now.time_since_epoch().count() != 0 && g_np.liveVblank.time_since_epoch().count() != 0)
+            npShift(g_np.liveVblank - now);
+        ps2_rollback::setIopOutputMuted(false);
+    }
+
+    void npTimeSync(uint64_t f, uint64_t rc)
+    {
+        const int peerFrame = static_cast<int>(rc) - 1 - g_np.delay;
+        const int mine = static_cast<int>(f) - peerFrame;
+        t4net::setLead(mine);
+        if (f >= g_np.tsHold)
+        {
+            g_np.leadMine[g_np.leadN % NetplayState::kLeadWin] = mine;
+            g_np.leadTheirs[g_np.leadN % NetplayState::kLeadWin] = t4net::peerLead();
+            ++g_np.leadN;
+        }
+        if (!g_np.timeSync || g_np.leadN < NetplayState::kLeadWin || f < g_np.rbStart || t4net::peerLost())
+            return;
+        int d[NetplayState::kLeadWin];
+        for (int i = 0; i < NetplayState::kLeadWin; ++i)
+            d[i] = g_np.leadMine[i] - g_np.leadTheirs[i];
+        std::sort(d, d + NetplayState::kLeadWin);
+        const int cut = NetplayState::kLeadWin / 5;
+        double sum = 0;
+        for (int i = cut; i < NetplayState::kLeadWin - cut; ++i)
+            sum += d[i];
+        const double adv = sum / (2.0 * (NetplayState::kLeadWin - 2 * cut)); // frames this side is ahead
+        if (adv < 1.0 || f - g_np.lastCorrection < 10u)
+            return;
+        const int frames = adv >= 2.5 ? std::min(4, static_cast<int>(adv + 0.5)) : 1;
+        const double ms = frames * (1000.0 / 60.0);
+        npSleep(ms);
+        npShift(std::chrono::microseconds(static_cast<int64_t>(ms * 1000.0)));
+        const int rtt = t4net::rttMs();
+        g_np.tsHold = f + static_cast<uint64_t>(frames) + (rtt > 0 ? static_cast<uint64_t>(rtt / 16.667 + 0.999) : 0u) + 2u;
+        g_np.leadN = 0;
+        g_np.lastCorrection = f;
+        ++g_np.corrections;
+        g_np.correctionMs += ms;
+        std::fprintf(g_log, "NETTS f=%" PRIu64 " ahead %.2f frames: gave up %d frame(s)\n", f, adv, frames);
+    }
+
+    // Never more than ~3 frames behind the host schedule: a slow stretch (a rollback, the stage that runs at 33 fps)
+    // is not caught up later in a burst.
+    void npPacingGuard()
+    {
+        const auto next = g_runtime->eeScheduler().nextVblankHostDeadline();
+        if (next.time_since_epoch().count() == 0)
+            return;
+        const auto late = std::chrono::steady_clock::now() - next;
+        if (late > std::chrono::milliseconds(50))
+        {
+            npShift(late);
+            ++g_np.rebases;
+            g_np.rebaseMs += std::chrono::duration<double, std::milli>(late).count();
+        }
+    }
+
+    bool writeBmp(const std::string &path, const std::vector<uint8_t> &rgba, uint32_t width, uint32_t height)
+    {
+        std::ofstream f(path, std::ios::binary);
+        if (!f)
+            return false;
+        auto put16 = [&f](uint16_t v) { f.write(reinterpret_cast<const char *>(&v), 2); };
+        auto put32 = [&f](uint32_t v) { f.write(reinterpret_cast<const char *>(&v), 4); };
+        const uint32_t imageBytes = width * height * 4u;
+        f.write("BM", 2);
+        put32(54u + imageBytes);
+        put32(0u);
+        put32(54u);
+        put32(40u);
+        put32(width);
+        put32(static_cast<uint32_t>(-static_cast<int32_t>(height)));
+        put16(1u);
+        put16(32u);
+        put32(0u);
+        put32(imageBytes);
+        put32(2835u);
+        put32(2835u);
+        put32(0u);
+        put32(0u);
+        std::vector<uint8_t> bgra(imageBytes);
+        for (uint32_t i = 0; i < width * height; ++i)
+        {
+            bgra[i * 4u + 0u] = rgba[i * 4u + 2u];
+            bgra[i * 4u + 1u] = rgba[i * 4u + 1u];
+            bgra[i * 4u + 2u] = rgba[i * 4u + 0u];
+            bgra[i * 4u + 3u] = 0xFFu;
+        }
+        f.write(reinterpret_cast<const char *>(bgra.data()), static_cast<std::streamsize>(bgra.size()));
+        return static_cast<bool>(f);
+    }
+
+    void npSummary(const char *tag)
+    {
+        std::string hist;
+        for (int d = 0; d <= 16; ++d)
+            if (g_np.depthHist[d])
+                hist += " " + std::to_string(d) + ":" + std::to_string(g_np.depthHist[d]);
+        const t4net::Stats st = t4net::stats();
+        int samples = 0;
+        const int rtt = t4net::rttMs(&samples);
+        const double runS = msSince(g_np.runT0) / 1000.0;
+        std::fprintf(g_log,
+                     "%s live %" PRIu64 " logical %" PRIu64 ": fps window %.1f run %.1f; rollbacks %" PRIu64 " resim frames %" PRIu64
+                     " max depth %" PRIu64 " depths%s; frames on predicted input %" PRIu64 " mispredicted %" PRIu64
+                     "; rollback ms (restore+resim) p50 %.2f p90 %.2f max %.2f; stalls %" PRIu64 " (%.0f ms); time sync %" PRIu64
+                     " (%.0f ms); rebases %" PRIu64 " (%.0f ms); displayed frame ms p50 %.1f p90 %.1f p99 %.1f; rtt %d ms (%d)"
+                     " delay %d; hashes compared %u mismatches %u; packets out %" PRIu64 " in %" PRIu64 " sim-dropped %" PRIu64
+                     " resends %" PRIu64 "; capture avg %.2f restore avg %.2f hash avg %.2f ms; peer %s\n",
+                     tag, g_np.liveFrames, g_frame, g_np.winFps, runS > 0 ? static_cast<double>(g_np.runFrames) / runS : 0.0,
+                     g_np.rollbacks, g_np.resimFrames, g_np.maxDepth, hist.c_str(), g_np.predicted, g_np.mispredicted,
+                     percentile(g_np.rbCost, 0.5), percentile(g_np.rbCost, 0.9), percentile(g_np.rbCost, 1.0), g_np.stalls,
+                     g_np.stallMs, g_np.corrections, g_np.correctionMs, g_np.rebases, g_np.rebaseMs,
+                     percentile(g_np.frameTimes, 0.5), percentile(g_np.frameTimes, 0.9), percentile(g_np.frameTimes, 0.99), rtt,
+                     samples, g_np.delay, t4net::hashesCompared(), t4net::hashMismatches(), st.packetsOut, st.packetsIn,
+                     st.simDropped, st.resends, g_np.captures ? g_np.captureMs / static_cast<double>(g_np.captures) : 0.0,
+                     g_np.rollbacks ? g_np.restoreMs / static_cast<double>(g_np.rollbacks) : 0.0,
+                     g_np.hashes ? g_np.hashMs / static_cast<double>(g_np.hashes) : 0.0,
+                     t4net::peerLost() ? (t4net::lostReason() ? t4net::lostReason() : "lost") : "ok");
+    }
+
+    void npHandshake()
+    {
+        const auto t0 = std::chrono::steady_clock::now();
+        std::fprintf(g_log, "NET waiting for the peer (handshake)\n");
+        std::fflush(g_log);
+        if (!t4net::waitConnected())
+        {
+            std::fprintf(g_log, "NET no session (%s): the game runs offline\n", t4net::failure() ? t4net::failure() : "?");
+            g_np.failed = true;
+            return;
+        }
+        g_np.delay = t4net::agreeDelay(1500);
+        g_np.sessionSeed = t4net::sessionSeed();
+        const uint64_t base = g_frame + static_cast<uint64_t>(g_np.delay);
+        t4net::setInputBase(static_cast<uint32_t>(base));
+        g_np.checked = g_frame;
+        g_np.hashNext = g_frame;
+        g_np.started = true;
+        g_np.runT0 = g_np.winT0 = std::chrono::steady_clock::now();
+        npShift(std::chrono::steady_clock::now() - t0); // the boot waited: pace from now
+        std::fprintf(g_log, "NET connected: slot %d, delay %d, frames < %" PRIu64 " neutral, lockstep until %" PRIu64
+                            ", max prediction %" PRIu64 ", session seed %08x, handshake %.0f ms\n",
+                     g_np.slot, g_np.delay, base, g_np.rbStart, g_np.maxPred, g_np.sessionSeed, msSince(t0));
+    }
+
+    void npBoundary(uint64_t cycle)
+    {
+        if (g_np.failed)
+            return;
+        if (!g_np.started)
+        {
+            npHandshake();
+            if (g_np.failed)
+                return;
+        }
+        const uint64_t f = g_frame;
+        if (g_np.resim)
+        {
+            ++g_np.resimFrames;
+            npCapture(cycle); // the corrected state of this boundary replaces the mispredicted one
+            if (f < g_np.liveFrame)
+            {
+                npDecideInputs(f);
+                return;
+            }
+            npEndResim();
+        }
+        else
+        {
+            npCapture(cycle);
+            ++g_np.liveFrames;
+            ++g_np.runFrames;
+            ++g_np.winFrames;
+            const auto now = std::chrono::steady_clock::now();
+            if (g_np.lastLive.time_since_epoch().count() != 0)
+                g_np.frameTimes.push_back(std::chrono::duration<double, std::milli>(now - g_np.lastLive).count());
+            if (g_np.frameTimes.size() > 20000u)
+                g_np.frameTimes.erase(g_np.frameTimes.begin(), g_np.frameTimes.begin() + 10000);
+            g_np.lastLive = now;
+            if (g_np.winFrames >= 300u)
+            {
+                g_np.winFps = static_cast<double>(g_np.winFrames) * 1000.0 / std::max(1.0, msSince(g_np.winT0));
+                g_np.winFrames = 0;
+                g_np.winT0 = now;
+            }
+            // this side's input for f + delay
+            const uint64_t t = f + static_cast<uint64_t>(g_np.delay);
+            if (t >= t4net::localMax())
+                t4net::setLocal(static_cast<uint32_t>(t), npSampleLocal(t));
+            // frame shots (both peers at the same logical frames)
+            while (g_np.shotNext < g_np.shots.size() && g_np.shots[g_np.shotNext] <= f)
+            {
+                if (g_np.shots[g_np.shotNext] == f)
+                {
+                    std::vector<uint8_t> pixels;
+                    uint32_t width = 0u, height = 0u;
+                    const std::string name = "net_shot_f" + std::to_string(f) + ".bmp";
+                    if (g_runtime->gs().copyLatchedHostPresentationFrame(pixels, width, height) && width && height &&
+                        pixels.size() >= static_cast<size_t>(width) * height * 4u)
+                        writeBmp(name, pixels, width, height);
+                }
+                ++g_np.shotNext;
+            }
+        }
+        t4net::sendNow();
+        uint64_t rc = t4net::remoteContig();
+        const bool firstVisit = f > g_np.lastLiveFrame; // (a live boundary is reached again after its rollback)
+        g_np.lastLiveFrame = std::max(g_np.lastLiveFrame, f);
+        if (firstVisit)
+            npTimeSync(f, rc);
+
+        const bool lockstep = f < g_np.rbStart;
+        const uint64_t need = lockstep ? f + 1u : (f > g_np.maxPred ? f - g_np.maxPred : 0u);
+        if (rc < need && !t4net::peerLost())
+        {
+            const auto t0 = std::chrono::steady_clock::now();
+            rc = t4net::waitRemote(static_cast<uint32_t>(need - 1u), UINT32_MAX);
+            const double ms = msSince(t0);
+            ++g_np.stalls;
+            g_np.stallMs += ms;
+            npShift(std::chrono::microseconds(static_cast<int64_t>(ms * 1000.0)));
+            if (ms > 200.0)
+                std::fprintf(g_log, "NET frame %" PRIu64 " waited %.0f ms for the peer's input up to %" PRIu64 " (%s)\n", f, ms,
+                             need - 1u, lockstep ? "lockstep" : "prediction window");
+        }
+
+        const uint64_t firstWrong = npScan(f, rc);
+        if (firstWrong != ~0ull && npStartRollback(f, firstWrong))
+            return;
+
+        // final hashes: boundaries g <= min(rc, f) (every input before g confirmed, no rollback pending)
+        const uint64_t upto = std::min(rc, f);
+        for (uint64_t g = g_np.hashNext; g <= upto; ++g)
+        {
+            if (!g_cfg.hashEvery || g % g_cfg.hashEvery != 0u)
+                continue;
+            const size_t slot = g % g_np.ring.size();
+            if (g_np.ringFrame[slot] != g)
+                continue;
+            const auto t0 = std::chrono::steady_clock::now();
+            const NetHash h = netHashOf(g_np.ring[slot], g_np.ringCycle[slot]);
+            g_np.hashMs += msSince(t0);
+            ++g_np.hashes;
+            t4net::pushHash(static_cast<uint32_t>(g), h.total);
+            std::fprintf(g_log, "NETHASH f=%" PRIu64 " h=%016" PRIx64 " ram=%016" PRIx64 " iop=%016" PRIx64 " cyc=%" PRIu64 "\n",
+                         g, h.total, h.ram, h.iop, h.cycle);
+            if (g_np.dump)
+            {
+                NetplayState::Kept &k = g_np.kept[g_np.keptNext++ % 3];
+                k.frame = g;
+                k.ram.assign(g_np.ring[slot].rdram.begin(), g_np.ring[slot].rdram.end());
+                k.ram.insert(k.ram.end(), g_np.ring[slot].scratchpad.begin(), g_np.ring[slot].scratchpad.end());
+            }
+        }
+        g_np.hashNext = std::max(g_np.hashNext, upto + 1u);
+        uint32_t badFrame = 0;
+        uint64_t mine = 0, theirs = 0;
+        while (t4net::takeMismatch(&badFrame, &mine, &theirs))
+        {
+            std::fprintf(g_log, "NETDESYNC f=%u local=%016" PRIx64 " peer=%016" PRIx64 "\n", badFrame, mine, theirs);
+            for (const NetplayState::Kept &k : g_np.kept)
+                if (k.frame == badFrame)
+                {
+                    std::ofstream out("net_desync_f" + std::to_string(badFrame) + ".bin", std::ios::binary);
+                    out.write(reinterpret_cast<const char *>(k.ram.data()), static_cast<std::streamsize>(k.ram.size()));
+                }
+        }
+
+        npDecideInputs(f);
+        npPacingGuard();
+        if (firstVisit && g_np.liveFrames % 600u == 0u)
+            npSummary("NETSUMMARY");
+        if (!g_np.ended && f >= g_np.endFrame)
+        {
+            g_np.ended = true;
+            npSummary("NETSUMMARY final");
+            std::fprintf(g_log, "NETEND f=%" PRIu64 "\n", f);
+            t4net::note("NETEND at frame %llu", static_cast<unsigned long long>(f));
+        }
+    }
+
+    // TEKKEN4_NET_BUILD (16 hex digits of tools/t4_buildid.py), else the first word of t4net_build.txt in the working
+    // directory; 0 = unknown (then no peer is refused for its build: tests only).
+    uint64_t parseBuildId()
+    {
+        if (const char *id = std::getenv("TEKKEN4_NET_BUILD"); id && *id)
+            return std::strtoull(id, nullptr, 16);
+        std::ifstream in("t4net_build.txt");
+        std::string text;
+        if (in >> text)
+            return std::strtoull(text.c_str(), nullptr, 16);
+        return 0;
+    }
+
+    bool npConfigure(PS2Runtime &runtime)
+    {
+        const char *spec = std::getenv("TEKKEN4_NET");
+        if (!spec || !*spec)
+            return false;
+        t4net::Config c;
+        const std::string s = spec;
+        if (s.rfind("host:", 0) == 0)
+        {
+            c.role = t4net::Role::Host;
+            c.port = static_cast<uint16_t>(std::atoi(s.c_str() + 5));
+            if (const char *peer = std::getenv("TEKKEN4_NET_PEER"))
+                c.peer = peer;
+        }
+        else if (s.rfind("join:", 0) == 0)
+        {
+            c.role = t4net::Role::Join;
+            c.peer = s.substr(5);
+            c.port = 0;
+            if (const char *port = std::getenv("TEKKEN4_NET_PORT"))
+                c.port = static_cast<uint16_t>(std::atoi(port));
+        }
+        else
+        {
+            RUNTIME_LOG("[rollback] TEKKEN4_NET=" << spec << ": expected host:<port> or join:<ip>:<port>\n");
+            return false;
+        }
+        if (const char *bind = std::getenv("TEKKEN4_NET_BIND"))
+            c.bind = bind;
+        if (const char *delay = std::getenv("TEKKEN4_NET_DELAY"); delay && *delay && std::strcmp(delay, "auto") != 0)
+            c.delaySetting = std::max(0, std::atoi(delay));
+        if (const char *seed = std::getenv("TEKKEN4_NET_SEED"))
+            c.seed = static_cast<uint32_t>(std::strtoul(seed, nullptr, 0));
+        if (const char *key = std::getenv("TEKKEN4_NET_KEY"))
+            c.key = key;
+        if (const char *timeout = std::getenv("TEKKEN4_NET_TIMEOUT"))
+            c.timeoutS = std::atoi(timeout);
+        c.buildId = parseBuildId();
+        if (const char *sim = std::getenv("TEKKEN4_NET_SIM"))
+            for (const std::string &item : split(sim, ','))
+            {
+                const auto kv = split(item, '=');
+                if (kv.size() != 2)
+                    continue;
+                if (kv[0] == "lat")
+                    c.simLatencyMs = std::atof(kv[1].c_str());
+                else if (kv[0] == "jitter")
+                    c.simJitterMs = std::atof(kv[1].c_str());
+                else if (kv[0] == "loss")
+                    c.simLossPercent = std::atof(kv[1].c_str());
+                else if (kv[0] == "seed")
+                    c.simSeed = static_cast<uint32_t>(parseNumber(kv[1]));
+            }
+        g_np.slot = c.role == t4net::Role::Host ? 0 : 1;
+        if (const char *v = std::getenv("TEKKEN4_NET_MAXPRED"))
+            g_np.maxPred = std::max<uint64_t>(1u, std::min<uint64_t>(12u, parseNumber(v)));
+        if (const char *v = std::getenv("TEKKEN4_NET_RBSTART"))
+            g_np.rbStart = parseNumber(v);
+        if (const char *v = std::getenv("TEKKEN4_NET_END"))
+            g_np.endFrame = parseNumber(v);
+        if (const char *v = std::getenv("TEKKEN4_NET_TIMESYNC"))
+            g_np.timeSync = parseNumber(v) != 0;
+        if (const char *v = std::getenv("TEKKEN4_NET_LOCALPAD"))
+            g_np.localPad = parseNumber(v) != 0;
+        if (const char *v = std::getenv("TEKKEN4_NET_PAD"))
+            g_np.padDevice = std::atoi(v);
+        if (const char *v = std::getenv("TEKKEN4_NET_DESYNC_DUMP"))
+            g_np.dump = parseNumber(v) != 0;
+        if (const char *v = std::getenv("TEKKEN4_NET_SHOTS"))
+        {
+            for (const std::string &item : split(v, ','))
+                g_np.shots.push_back(parseNumber(item));
+            std::sort(g_np.shots.begin(), g_np.shots.end());
+        }
+        const size_t ring = static_cast<size_t>(g_np.maxPred + 3u);
+        g_np.ring.resize(ring);
+        g_np.ringFrame.assign(ring, ~0ull);
+        g_np.ringCycle.assign(ring, 0u);
+        (void)runtime;
+        if (!t4net::start(c))
+        {
+            RUNTIME_LOG("[rollback] netplay transport did not start (see net.log)\n");
+            return false;
+        }
+        g_np.on = true;
+        return true;
+    }
+#endif
+
     // ---------------------------------------------------------------- the boundary
     const char *passLabel()
     {
         if (g_cfg.mode == Mode::SelfNet)
             return g_net.resim ? "R" : (g_frame >= g_cfg.netStart ? "S" : "-");
+#ifdef TEKKEN4_NETPLAY
+        if (g_cfg.mode == Mode::Net)
+            return g_np.resim ? "R" : (g_frame < g_np.rbStart ? "L" : "N");
+#endif
         return g_test.resim ? "R" : (g_test.wrong ? "W" : (g_test.active ? "1" : "-"));
     }
 
@@ -974,7 +1664,8 @@ namespace tekken4_rollback
         ++g_frame;
         ++g_wallFrames;
         std::vector<uint64_t> pages;
-        const ps2_rollback::StateHash hash = ps2_rollback::hashState(*g_runtime, g_cfg.masks, &pages);
+        const ps2_rollback::StateHash hash =
+            g_cfg.frameHash ? ps2_rollback::hashState(*g_runtime, g_cfg.masks, &pages) : ps2_rollback::StateHash{};
         size_t dirty = 0;
         if (g_prevPages.size() == pages.size())
             for (size_t p = 0; p < pages.size(); ++p)
@@ -997,14 +1688,21 @@ namespace tekken4_rollback
         g_lastProfile = prof;
 
         const char *pass = passLabel();
+        uint32_t in1 = scriptedButtons(0, g_frame), in2 = g_cfg.pad2 ? scriptedButtons(1, g_frame) : 0u;
+#ifdef TEKKEN4_NETPLAY
+        if (g_cfg.mode == Mode::Net) // the inputs the frame that just ended ran with
+        {
+            in1 = g_np.inputs[0].buttons;
+            in2 = g_np.inputs[1].buttons;
+        }
+#endif
         std::fprintf(g_log, "f=%" PRIu64 " tick=%" PRIu64 " dt=%" PRIu64 " cyc=%" PRIu64 " dcyc=%" PRIu64
                             " h=%016" PRIx64 " ram=%016" PRIx64 " oth=%016" PRIx64 " sch=%016" PRIx64
                             " idle=%" PRIu64 " in=%04x in2=%04x ee=%.2f gs=%.2f vif=%.2f vu=%.2f/%" PRIu64 " iop=%.2f wall=%.2f hk=%.2f dirty=%zu t=%.2f p=%s cut=%x run=%d loop=%" PRIu64
                             " wake=%s:%d reg=%s\n",
                      g_frame, info.vsyncTick, info.vsyncTick - g_lastTick, info.eeCycle, info.eeCycle - g_lastCycle,
                      hash.total, hash.rdram, hash.other, hash.scheduler,
-                     g_runtime->eeScheduler().idleSkippedCycles() - g_lastIdle, scriptedButtons(0, g_frame),
-                     g_cfg.pad2 ? scriptedButtons(1, g_frame) : 0u, eeMs, gsMs, vifMs, vuMs, vuRuns, iopMs, wallMs, g_hookMs, dirty,
+                     g_runtime->eeScheduler().idleSkippedCycles() - g_lastIdle, in1, in2, eeMs, gsMs, vifMs, vuMs, vuRuns, iopMs, wallMs, g_hookMs, dirty,
                      std::chrono::duration<double>(hookStart - g_start).count(), pass, executedCuts, info.runningThreadId,
                      tekken4::g_frames - g_lastLoops, reasonName(info.reason), info.waitId, regionsText(hash).c_str());
         g_lastLoops = tekken4::g_frames;
@@ -1035,10 +1733,21 @@ namespace tekken4_rollback
             testBoundary(hash, pages, eeMs);
         else if (g_cfg.mode == Mode::SelfNet)
             netBoundary(eeMs);
+        else if (g_cfg.mode == Mode::Measure)
+            measureNetHash(info.eeCycle);
+#ifdef TEKKEN4_NETPLAY
+        else if (g_cfg.mode == Mode::Net)
+            npBoundary(info.eeCycle);
+#endif
 
         g_frameCuts = cutsForNextFrame();
         ps2_rollback::setActiveCuts(g_frameCuts);
         startFrameIop((g_frameCuts & ps2_rollback::CutIop) == 0u);
+#ifdef PS2X_ROLLBACK_IOP_STATE
+        // IOP in the state: a re-simulated frame (any cut) runs the IOP, its SPU2 output was already heard live
+        if (g_cfg.iopState)
+            ps2_rollback::setIopOutputMuted(g_frameCuts != 0u);
+#endif
 
         if (g_wallFrames % 600u == 0u)
         {
@@ -1072,11 +1781,16 @@ namespace tekken4_rollback
         std::memcpy(&reent, rdram + 0x304b94u, 4);
         SET_GPR_U32(ctx, 2, 0x300000u);
         SET_GPR_U32(ctx, 3, reent);
+        uint32_t stored = seed;
+#ifdef TEKKEN4_NETPLAY
+        if (g_cfg.mode == Mode::Net && g_np.started) // the session's seed: other matches, the same on both peers
+            stored = seed ^ g_np.sessionSeed;
+#endif
         if (uint8_t *state = getMemPtr(rdram, reent + 88u))
-            std::memcpy(state, &seed, 4);
+            std::memcpy(state, &stored, 4);
         if (g_log)
-            std::fprintf(g_log, "SRAND seed=0x%08x ra=0x%08x frame=%" PRIu64 " cycle=%" PRIu64 "\n", seed, ra, g_frame,
-                         g_runtime ? g_runtime->eeScheduler().eeCycle() : 0u);
+            std::fprintf(g_log, "SRAND seed=0x%08x stored=0x%08x ra=0x%08x frame=%" PRIu64 " cycle=%" PRIu64 "\n", seed,
+                         stored, ra, g_frame, g_runtime ? g_runtime->eeScheduler().eeCycle() : 0u);
         ctx->pc = ra;
     }
 
@@ -1112,6 +1826,9 @@ namespace tekken4_rollback
     void apply(PS2Runtime &runtime)
     {
         const char *mode = std::getenv("TEKKEN4_RB_MODE");
+        const char *netSpec = std::getenv("TEKKEN4_NET");
+        if ((!mode || !*mode) && netSpec && *netSpec)
+            mode = "net";
         if (!mode || !*mode)
             return;
         if (std::strcmp(mode, "measure") == 0)
@@ -1120,9 +1837,13 @@ namespace tekken4_rollback
             g_cfg.mode = Mode::Test;
         else if (std::strcmp(mode, "selfnet") == 0)
             g_cfg.mode = Mode::SelfNet;
+#ifdef TEKKEN4_NETPLAY
+        else if (std::strcmp(mode, "net") == 0)
+            g_cfg.mode = Mode::Net;
+#endif
         else
         {
-            RUNTIME_LOG("[rollback] unknown TEKKEN4_RB_MODE=" << mode << " (measure|test|selfnet), rollback off\n");
+            RUNTIME_LOG("[rollback] unknown TEKKEN4_RB_MODE=" << mode << " (measure|test|selfnet|net), rollback off\n");
             return;
         }
         g_runtime = &runtime;
@@ -1146,6 +1867,23 @@ namespace tekken4_rollback
             g_cfg.pad2 = true;
             g_cfg.scripted = true;
         }
+        if (g_cfg.mode == Mode::Net)
+        {
+            g_cfg.pad2 = true;
+            g_cfg.scripted = true; // the provider answers for both ports
+            g_cfg.iopState = true;
+            g_cfg.frameHash = false;
+            g_cfg.hashEvery = 30;
+        }
+        if (const char *v = std::getenv("TEKKEN4_RB_IOPSTATE"))
+            g_cfg.iopState = parseNumber(v) != 0;
+        if (const char *v = std::getenv("TEKKEN4_RB_FRAMEHASH"))
+            g_cfg.frameHash = parseNumber(v) != 0;
+        if (const char *v = std::getenv("TEKKEN4_NET_HASH_EVERY"))
+            g_cfg.hashEvery = parseNumber(v);
+#ifndef PS2X_ROLLBACK_IOP_STATE
+        g_cfg.iopState = false;
+#endif
         if (const char *which = std::getenv("TEKKEN4_RB_BOUNDARY"))
         {
             const auto parts = split(which, ':');
@@ -1230,6 +1968,9 @@ namespace tekken4_rollback
                     g_cfg.cuts |= ps2_rollback::CutVu1;
             }
         }
+        // IOP in the state: re-simulated frames run it, so no IOP cut (and no gate, below)
+        if (g_cfg.iopState)
+            g_cfg.cuts &= ~static_cast<uint32_t>(ps2_rollback::CutIop);
         // VU1 data memory is output state once VU1 runs are cut (docs/ROLLBACK_PHASE2.md): not hashed then.
         ps2_rollback::g_hostProfile.hashVu1Data = (g_cfg.cuts & ps2_rollback::CutVu1) == 0u;
         if (const char *hashVu1 = std::getenv("TEKKEN4_RB_HASHVU1"))
@@ -1256,10 +1997,21 @@ namespace tekken4_rollback
             g_net.ring.resize(size);
             g_net.ringFrame.assign(size, ~0ull);
         }
+#ifdef PS2X_ROLLBACK_IOP_STATE
+        ps2_rollback::setIncludeIop(g_cfg.iopState);
+#endif
+#ifdef TEKKEN4_NETPLAY
+        if (g_cfg.mode == Mode::Net && !npConfigure(runtime))
+        {
+            std::fprintf(g_log, "NET not started (TEKKEN4_NET missing or invalid, or the socket failed): netplay off\n");
+            g_np.failed = true;
+        }
+#endif
         std::fprintf(g_log, "CONFIG mode=%s cuts=%x tail=%" PRIu64 " snd=%s pad2=%d net=start:%" PRIu64 ",delay:%" PRIu64
-                            ",jitter:%" PRIu64 ",max:%" PRIu64 "\n",
+                            ",jitter:%" PRIu64 ",max:%" PRIu64 " iopstate=%d framehash=%d hashevery=%" PRIu64 "\n",
                      mode, g_cfg.cuts, g_cfg.cutTail, g_cfg.sndForward ? "forward" : "replay", g_cfg.pad2 ? 1 : 0,
-                     g_cfg.netStart, g_cfg.netDelay, g_cfg.netJitter, g_cfg.netMax);
+                     g_cfg.netStart, g_cfg.netDelay, g_cfg.netJitter, g_cfg.netMax, g_cfg.iopState ? 1 : 0,
+                     g_cfg.frameHash ? 1 : 0, g_cfg.hashEvery);
         if (g_cfg.scripted)
             ps2_stubs::setPadInputProvider(padProvider);
         if (const char *perf = std::getenv("TEKKEN4_PERF_LOG"); !perf || !*perf)
@@ -1280,7 +2032,8 @@ namespace tekken4_rollback
             runtime.registerFunction(0x002a2528u, loggedSrand);
         // The IOP gate logs what the IOP does to the EE on every live frame (only needed when frames are
         // re-simulated with the IOP frozen, but cheap, and measure runs then show the same counters).
-        ps2_rollback::setIopGate(&g_gate);
+        if (!g_cfg.iopState)
+            ps2_rollback::setIopGate(&g_gate);
         // The main loop's vsync wait FUN_0022a140 polls 0x1ccafb7 at 0x22a150 until the vblank handler clears it:
         // pure cycle burning, skipped in bulk up to the next event (TEKKEN4_RB_IDLE=0: iterate as the game does).
         if (const char *idle = std::getenv("TEKKEN4_RB_IDLE"); !idle || parseNumber(idle) != 0)

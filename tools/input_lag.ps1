@@ -59,6 +59,8 @@ $env:TEKKEN4_INPUT_LEGACY = $(if ($Mode -eq "legacy") { "1" } else { "0" })
 if ($Present) { $env:TEKKEN4_INPUT_PRESENT = $Present } else { $env:TEKKEN4_INPUT_PRESENT = "paced" }
 if (-not $env:PS2X_GS_BACKEND) { $env:PS2X_GS_BACKEND = "gl" }
 if (-not $env:PS2X_GS_THREADS) { $env:PS2X_GS_THREADS = "auto" }
+# The runtime debugger starts hidden since patch 39; =0 makes the F1 press below a no-op.
+if (-not $env:PS2X_DEBUG_PANEL) { $env:PS2X_DEBUG_PANEL = "0" }
 $env:TEKKEN4_FRAME_SHOTS = "38"
 
 if (-not $Exe) {

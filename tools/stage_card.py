@@ -2,6 +2,7 @@
 
   python -I tools/stage_card.py <frame_NNs.bmp> [target] -> "<index> <name> <distance> [<Right presses to target>]"
                                                              of the closest reference card
+  python -I tools/stage_card.py --json <frame_NNs.bmp>    -> {"index","name","dist","second","gap"} (gap = 2nd dist - best)
   python -I tools/stage_card.py --make-refs <run dir>     -> crops the 10 reference cards from a probe run into
                                                              logs/stage_refs/ (game imagery: stays under logs/, never in git)
 
@@ -44,6 +45,21 @@ def crop(path):
     return out
 
 
+def rank(path):
+    """[(dist, index, name), ...] closest first. A settled card is dist<=22 and gap>=30 (see logs/grok/stage-pick-notes.md)."""
+    probe = crop(path)
+    rows = []
+    for name in STAGES:
+        ref_path = os.path.join(REF_DIR, f"{STAGES.index(name):02d}_{name}.raw")
+        ref = open(ref_path, "rb").read()
+        if len(ref) != len(probe) or not ref:
+            sys.exit(f"{ref_path}: {len(ref)} bytes, crop {len(probe)}")
+        dist = sum(abs(a - b) for a, b in zip(probe, ref)) / len(ref)
+        rows.append((dist, STAGES.index(name), name))
+    rows.sort()
+    return rows
+
+
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == "--make-refs":
         os.makedirs(REF_DIR, exist_ok=True)
@@ -52,18 +68,18 @@ def main():
                 f.write(crop(os.path.join(sys.argv[2], f"frame_{sec}s.bmp")))
         print(f"{len(PROBE_SECONDS)} reference cards in {REF_DIR}")
         return
+    if len(sys.argv) == 3 and sys.argv[1] == "--json":
+        rows = rank(sys.argv[2])
+        best, second = rows[0], rows[1]
+        print('{"index": %d, "name": "%s", "dist": %.2f, "second": "%s", "gap": %.2f}'
+              % (best[1], best[2], best[0], second[2], second[0] - best[0]))
+        return
     if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] not in STAGES):
         sys.exit(__doc__)
-    probe = crop(sys.argv[1])
-    best = None
-    for name in STAGES:
-        ref_path = os.path.join(REF_DIR, f"{STAGES.index(name):02d}_{name}.raw")
-        ref = open(ref_path, "rb").read()
-        dist = sum(abs(a - b) for a, b in zip(probe, ref)) / len(ref)
-        if best is None or dist < best[2]:
-            best = (STAGES.index(name), name, dist)
-    presses = f" {(STAGES.index(sys.argv[2]) - best[0]) % len(STAGES)}" if len(sys.argv) == 3 else ""
-    print(f"{best[0]} {best[1]} {best[2]:.1f}{presses}")
+    best = rank(sys.argv[1])[0]
+    presses = f" {(STAGES.index(sys.argv[2]) - best[1]) % len(STAGES)}" if len(sys.argv) == 3 else ""
+    print(f"{best[1]} {best[2]} {best[0]:.1f}{presses}")
 
 
-main()
+if __name__ == "__main__":
+    main()

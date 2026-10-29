@@ -30,3 +30,6 @@ __pycache__/
 help/
 to clean/
 imgui.ini
+
+# The player's settings (F2 window), written by the game via PS2X_SETTINGS (tools/run_game.cmd)
+settings.ini

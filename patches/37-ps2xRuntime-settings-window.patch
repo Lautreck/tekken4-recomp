@@ -1,0 +1,361 @@
+diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
+index b992bfa..2ae763e 100644
+--- a/ps2xRuntime/CMakeLists.txt
++++ b/ps2xRuntime/CMakeLists.txt
+@@ -385,6 +385,7 @@ add_library(ps2_runtime STATIC
+     src/lib/gs/gs_cpu_backend.cpp
+     src/lib/ps2_input_latency.cpp
+     src/lib/ps2_hud.cpp
++    src/lib/ps2_graphics_settings.cpp
+     src/lib/ps2_iop_host.cpp
+     src/lib/ps2_memory.cpp
+     src/lib/ps2_pad.cpp
+diff --git a/ps2xRuntime/include/ps2_debug_panel.h b/ps2xRuntime/include/ps2_debug_panel.h
+index b9933d5..9311b4d 100644
+--- a/ps2xRuntime/include/ps2_debug_panel.h
++++ b/ps2xRuntime/include/ps2_debug_panel.h
+@@ -17,6 +17,7 @@ public:
+ private:
+     bool m_initialized = false;
+     bool m_visible = true;
++    bool m_settingsVisible = false; // F2
+     bool m_showRegisters = true;
+     unsigned int m_memoryAddress = 0x00100000u;
+     unsigned int m_memoryBytes = 0x100u;
+diff --git a/ps2xRuntime/include/runtime/ps2_graphics_settings.h b/ps2xRuntime/include/runtime/ps2_graphics_settings.h
+new file mode 100644
+index 0000000..aa392f2
+--- /dev/null
++++ b/ps2xRuntime/include/runtime/ps2_graphics_settings.h
+@@ -0,0 +1,28 @@
++#pragma once
++
++// User graphics settings: the F2 settings window (ps2_debug_panel.cpp) changes them while the game runs, the host
++// present path and the GS backend read them. PS2X_SETTINGS=<file> loads them at start and saves every change; without
++// it the defaults hold and nothing is written (test runs stay reproducible).
++namespace ps2_graphics
++{
++    enum class Aspect : int
++    {
++        Ratio4x3 = 0,  // a PS2 on a 4:3 TV (PCSX2's default)
++        Ratio16x9 = 1, // stretches a 4:3 picture unless the game renders widescreen
++        Stretch = 2,   // fill the window
++        Native = 3,    // the frame's own pixel ratio (640x448 -> 1.43:1), the old behaviour
++    };
++
++    struct Settings
++    {
++        Aspect aspect = Aspect::Ratio4x3;
++        bool smoothScreen = false; // bilinear filtering when the frame is scaled to the window
++    };
++
++    Settings get();
++    void set(const Settings &settings);
++
++    // Width / height of the picture on screen for a window of that size (Stretch -> the window's own ratio).
++    float displayAspect(const Settings &settings, float frameWidth, float frameHeight, float windowWidth,
++                        float windowHeight);
++}
+diff --git a/ps2xRuntime/src/lib/ps2_debug_panel.cpp b/ps2xRuntime/src/lib/ps2_debug_panel.cpp
+index c9aa2c6..c7e5712 100644
+--- a/ps2xRuntime/src/lib/ps2_debug_panel.cpp
++++ b/ps2xRuntime/src/lib/ps2_debug_panel.cpp
+@@ -3,6 +3,7 @@
+ #include "ps2_runtime_macros.h"
+ #include "ps2_log.h"
+ #include "runtime/ee_scheduler.h"
++#include "runtime/ps2_graphics_settings.h"
+ 
+ #include <unordered_set>
+ #include "Kernel/Syscalls/Helpers/State.h"
+@@ -20,6 +21,7 @@
+ #include <array>
+ #include <cstdint>
+ #include <cstdio>
++#include <cstdlib>
+ #include <cstring>
+ #include <filesystem>
+ #include <fstream>
+@@ -2174,6 +2176,38 @@ namespace
+         }
+     }
+ 
++    // F2: the player's settings (ps2_graphics_settings.h). Changes apply on the next frame and are saved at once.
++    void drawSettingsWindow(bool &open)
++    {
++        ImGui::SetNextWindowPos(ImVec2(170.0f, 40.0f), ImGuiCond_FirstUseEver); // right of the HUD
++        if (ImGui::Begin("Settings (F2)", &open, ImGuiWindowFlags_AlwaysAutoResize))
++        {
++            ps2_graphics::Settings settings = ps2_graphics::get();
++            bool changed = false;
++            ImGui::SeparatorText("Screen");
++            static const char *const kAspects[] = {"4:3", "16:9 (stretches a 4:3 picture)", "Stretch to window",
++                                                   "Frame pixels (640x448, old default)"};
++            int aspect = static_cast<int>(settings.aspect);
++            if (ImGui::Combo("Aspect ratio", &aspect, kAspects, IM_ARRAYSIZE(kAspects)))
++            {
++                settings.aspect = static_cast<ps2_graphics::Aspect>(aspect);
++                changed = true;
++            }
++            changed |= ImGui::Checkbox("Smooth scaling to the window (bilinear)", &settings.smoothScreen);
++            if (changed)
++                ps2_graphics::set(settings);
++            ImGui::Spacing();
++            ImGui::TextDisabled("Coming next: internal resolution, widescreen,");
++            ImGui::TextDisabled("anti-aliasing, sharpening.");
++            const char *path = std::getenv("PS2X_SETTINGS");
++            if (path && path[0])
++                ImGui::TextDisabled("Saved to %s", path);
++            else
++                ImGui::TextDisabled("Not saved: PS2X_SETTINGS is not set.");
++        }
++        ImGui::End();
++    }
++
+ #endif
+ }
+ void PS2DebugPanel::initialize()
+@@ -2183,6 +2217,12 @@ void PS2DebugPanel::initialize()
+     {
+         rlImGuiSetup(true);
+         m_initialized = true;
++        // The debugger stays hidden until F1 (it covered the game at start); PS2X_DEBUG_PANEL=1 shows it at start.
++        // PS2X_SETTINGS_OPEN=1 opens the F2 settings window at start (screenshots of it in test runs).
++        const char *panel = std::getenv("PS2X_DEBUG_PANEL");
++        m_visible = panel && panel[0] == '1';
++        const char *open = std::getenv("PS2X_SETTINGS_OPEN");
++        m_settingsVisible = open && open[0] == '1';
+     }
+ #endif
+ }
+@@ -2210,14 +2250,28 @@ void PS2DebugPanel::draw(PS2Runtime &runtime)
+     {
+         toggleVisible();
+     }
++    if (IsKeyPressed(KEY_F2))
++    {
++        m_settingsVisible = !m_settingsVisible;
++    }
+ 
+-    if (!m_visible)
++    if (!m_visible && !m_settingsVisible)
+     {
+         return;
+     }
+ 
+     rlImGuiBegin();
+ 
++    if (m_settingsVisible)
++    {
++        drawSettingsWindow(m_settingsVisible);
++    }
++    if (!m_visible)
++    {
++        rlImGuiEnd();
++        return;
++    }
++
+     ImGui::SetNextWindowSize(ImVec2(780.0f, 620.0f), ImGuiCond_FirstUseEver);
+     if (ImGui::Begin("Runtime Debugger", &m_visible, ImGuiWindowFlags_MenuBar))
+     {
+diff --git a/ps2xRuntime/src/lib/ps2_graphics_settings.cpp b/ps2xRuntime/src/lib/ps2_graphics_settings.cpp
+new file mode 100644
+index 0000000..b9aa3ab
+--- /dev/null
++++ b/ps2xRuntime/src/lib/ps2_graphics_settings.cpp
+@@ -0,0 +1,96 @@
++#include "runtime/ps2_graphics_settings.h"
++
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <mutex>
++#include <string>
++
++namespace ps2_graphics
++{
++    namespace
++    {
++        std::mutex g_mutex;
++        Settings g_settings;
++        bool g_loaded = false;
++
++        const char *settingsPath()
++        {
++            const char *path = std::getenv("PS2X_SETTINGS");
++            return (path && path[0]) ? path : nullptr;
++        }
++
++        // key=value lines; unknown keys and bad values are ignored.
++        void loadLocked()
++        {
++            g_loaded = true;
++            const char *path = settingsPath();
++            if (!path)
++                return;
++            FILE *file = std::fopen(path, "r");
++            if (!file)
++                return;
++            char line[256];
++            while (std::fgets(line, sizeof(line), file))
++            {
++                char *eq = std::strchr(line, '=');
++                if (!eq)
++                    continue;
++                *eq = '\0';
++                const std::string key(line);
++                const int value = std::atoi(eq + 1);
++                if (key == "aspect" && value >= 0 && value <= static_cast<int>(Aspect::Native))
++                    g_settings.aspect = static_cast<Aspect>(value);
++                else if (key == "smooth_screen")
++                    g_settings.smoothScreen = value != 0;
++            }
++            std::fclose(file);
++        }
++
++        void saveLocked()
++        {
++            const char *path = settingsPath();
++            if (!path)
++                return;
++            FILE *file = std::fopen(path, "w");
++            if (!file)
++                return;
++            std::fprintf(file, "aspect=%d\n", static_cast<int>(g_settings.aspect));
++            std::fprintf(file, "smooth_screen=%d\n", g_settings.smoothScreen ? 1 : 0);
++            std::fclose(file);
++        }
++    }
++
++    Settings get()
++    {
++        std::lock_guard<std::mutex> lock(g_mutex);
++        if (!g_loaded)
++            loadLocked();
++        return g_settings;
++    }
++
++    void set(const Settings &settings)
++    {
++        std::lock_guard<std::mutex> lock(g_mutex);
++        g_loaded = true;
++        g_settings = settings;
++        saveLocked();
++    }
++
++    float displayAspect(const Settings &settings, float frameWidth, float frameHeight, float windowWidth,
++                        float windowHeight)
++    {
++        switch (settings.aspect)
++        {
++        case Aspect::Ratio4x3:
++            return 4.0f / 3.0f;
++        case Aspect::Ratio16x9:
++            return 16.0f / 9.0f;
++        case Aspect::Stretch:
++            return windowHeight > 0.0f ? windowWidth / windowHeight : 4.0f / 3.0f;
++        case Aspect::Native:
++        default:
++            return frameHeight > 0.0f ? frameWidth / frameHeight : 4.0f / 3.0f;
++        }
++    }
++}
+diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
+index 6d87fb4..f49c70a 100644
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -11,8 +11,10 @@
+ #include "Kernel/Stubs/GS.h"
+ #include "Kernel/Stubs/MPEG.h"
+ #include "ps2_host_backend.h"
++#include "rlgl.h"
+ #include "runtime/ps2_input_latency.h"
+ #include "runtime/ps2_hud.h"
++#include "runtime/ps2_graphics_settings.h"
+ #include "ps2_iop_host.h"
+ #include "ps2x/iop/iop_subsystem.h"
+ 
+@@ -49,8 +51,9 @@ static constexpr uint32_t DEFAULT_FB_ADDR = (PS2_RAM_SIZE - DEFAULT_FB_SIZE - 0x
+ static constexpr int HOST_WINDOW_WIDTH = 960;
+ static constexpr int HOST_WINDOW_HEIGHT = 544;
+ #else
++// 4:3, the default display aspect (ps2_graphics_settings.h), so the picture fills the first window.
+ static constexpr int HOST_WINDOW_WIDTH = FB_WIDTH;
+-static constexpr int HOST_WINDOW_HEIGHT = DEFAULT_DISPLAY_HEIGHT;
++static constexpr int HOST_WINDOW_HEIGHT = FB_WIDTH * 3 / 4;
+ #endif
+ struct ElfHeader
+ {
+@@ -2410,11 +2413,49 @@ void PS2Runtime::run()
+         SetTargetFPS(0);
+     ps2_input_latency::attachWindow(GetWindowHandle());
+ 
+-    auto presentHostFrame = [this, &frameTex]()
++    bool smoothFrameTex = false; // raylib's default filter is point
++
++    // PS2X_HOST_SHOTS=<s>,<s>,...: the window's final picture (aspect, HUD, settings window) at those seconds as
++    // host_<s>s.png in the working directory. Read back before the swap, so it works with the monitor off; the
++    // frame shots (TEKKEN4_FRAME_SHOTS) only hold the guest frame.
++    std::vector<double> hostShotTimes;
++    if (const char *shots = std::getenv("PS2X_HOST_SHOTS"))
++    {
++        std::stringstream list(shots);
++        for (std::string item; std::getline(list, item, ',');)
++            if (!item.empty())
++                hostShotTimes.push_back(std::atof(item.c_str()));
++        std::sort(hostShotTimes.begin(), hostShotTimes.end());
++    }
++    size_t nextHostShot = 0;
++    const auto hostShotStart = std::chrono::steady_clock::now();
++    auto takeHostShot = [&hostShotTimes, &nextHostShot, hostShotStart]()
++    {
++        if (nextHostShot >= hostShotTimes.size() ||
++            std::chrono::duration<double>(std::chrono::steady_clock::now() - hostShotStart).count() <
++                hostShotTimes[nextHostShot])
++            return;
++        rlDrawRenderBatchActive();
++        const int width = GetRenderWidth();
++        const int height = GetRenderHeight();
++        unsigned char *pixels = rlReadScreenPixels(width, height);
++        Image image{pixels, width, height, 1, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
++        ExportImage(image, TextFormat("host_%02ds.png", static_cast<int>(hostShotTimes[nextHostShot])));
++        MemFree(pixels);
++        ++nextHostShot;
++    };
++
++    auto presentHostFrame = [this, &frameTex, &smoothFrameTex, &takeHostShot]()
+     {
+         uint32_t presentWidth = FB_WIDTH;
+         uint32_t presentHeight = DEFAULT_DISPLAY_HEIGHT;
+         UploadFrame(frameTex, this, presentWidth, presentHeight);
++        const ps2_graphics::Settings graphics = ps2_graphics::get();
++        if (graphics.smoothScreen != smoothFrameTex)
++        {
++            smoothFrameTex = graphics.smoothScreen;
++            SetTextureFilter(frameTex, smoothFrameTex ? TEXTURE_FILTER_BILINEAR : TEXTURE_FILTER_POINT);
++        }
+         // Keys posted during the readback are dispatched before the swap, so the
+         // game thread can see them for the rest of this guest frame.
+         if (!ps2_input_latency::legacy())
+@@ -2426,9 +2467,10 @@ void PS2Runtime::run()
+         const float srcHeight = static_cast<float>(std::max<uint32_t>(1u, presentHeight));
+         const float screenWidth = static_cast<float>(GetScreenWidth());
+         const float screenHeight = static_cast<float>(GetScreenHeight());
+-        const float scale = std::min(screenWidth / srcWidth, screenHeight / srcHeight);
+-        const float dstWidth = srcWidth * scale;
+-        const float dstHeight = srcHeight * scale;
++        // Largest rectangle of the chosen display aspect that fits the window, centred.
++        const float aspect = ps2_graphics::displayAspect(graphics, srcWidth, srcHeight, screenWidth, screenHeight);
++        const float dstWidth = std::min(screenWidth, screenHeight * aspect);
++        const float dstHeight = std::min(screenHeight, screenWidth / aspect);
+         const Rectangle srcRect{0.0f, 0.0f, srcWidth, srcHeight};
+         const Rectangle dstRect{
+             (screenWidth - dstWidth) * 0.5f,
+@@ -2445,6 +2487,7 @@ void PS2Runtime::run()
+         {
+             m_debugUiDrawCallback(*this, m_debugUiUserData);
+         }
++        takeHostShot();
+         EndDrawing();
+         ps2_input_latency::onSwapReturned();
+     };

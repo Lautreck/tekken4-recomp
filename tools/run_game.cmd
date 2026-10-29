@@ -18,6 +18,9 @@ rem character select; needs the game ISO in the project root or TEKKEN4_ISO). Se
 if not defined TEKKEN4_SOUND set "TEKKEN4_SOUND=1"
 rem The window title says whose game it is (Grok/Claude test runs title theirs): TEKKEN4_WINDOW_TITLE overrides it.
 if not defined TEKKEN4_WINDOW_TITLE set "TEKKEN4_WINDOW_TITLE=TEKKEN 4 - YOUR GAME"
+rem F2 opens the settings window (aspect ratio, smoothing, ...); your choices are kept in settings.ini (gitignored).
+rem F1 opens the runtime debugger, F3 toggles the fps / input-latency HUD.
+if not defined PS2X_SETTINGS set "PS2X_SETTINGS=%ROOT%\settings.ini"
 start "" /b powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0set_window_title.ps1" -Title "%TEKKEN4_WINDOW_TITLE%"
 "%EXE%" "%ROOT%\game\disc\SCES_508.78" > "%ROOT%\logs\run.log" 2>&1
 echo exit code %errorlevel%, log in logs\run.log

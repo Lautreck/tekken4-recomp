@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-10-29 03:26 (session 7)_
+_Last updated: 2026-10-29 07:23 (session 7)_
 
 ## Resume here
 To continue, open Claude Code in this folder and say: "read docs/status.md and continue".
@@ -105,6 +105,28 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
     Main-tree override: Grok's music-5 WIP (logSoundQueue, AUDIO_STATS logs) saved to
     logs/grok/music5_overrides_wip.cpp, replaced by the clean delivery (guarded by PS2X_IOP_HAS_USER_SIF_CMD).
     wt-music still holds Grok's full WIP + this fix + the dump (not built by default).
+  - **Grok queue (user: "both, one after the other"):** stage-pick (docs/ai/prompts/stage-pick.md, tree
+    external/wt-stage-pick, 200 turns: closed-loop stage select in run_fixed_fight) running; spu2-irq
+    (docs/ai/prompts/spu2-irq.md, tree external/wt-spu2-irq, 250 turns: verify patch 36's IRQ-enable workaround
+    against PCSX2) queued by grok_chain.ps1 (logs/grok/chain-spu2-irq.log). Review both when done.
+  - **GRAPHICS GOAL (user 2026-10-29: "all" of higher resolution, widescreen 16:9, smoothing/filtering, in-game
+    settings menu).** Survey (subagent): PS2X_GS_HW_SCALE already scales the GS hw backend (createTarget, vertices,
+    viewport/scissor), but >1x breaks after it: rtUploadTarget refuses scale != 1 (movie upload goes black),
+    gs_frontend kHostFrameWidth 640 row stride (garbled), host frameTex 640x512 fixed, full glReadPixels per frame
+    (zero-copy PublishSharedTexture path exists but inactive: GS init runs before InitWindow), scale read once.
+    No AA/sharpen code; MSAA impractical (texelFetch feedback reads) -> supersample + post-process. Forced bilinear
+    goes in the texture-sampling path for uploaded textures only. ImGui (rlImGui) is linked into ps2EntryRunner.
+    Widescreen: PCSX2 patches.zip has SCES-50878_2251E14D.pnach (nemesis2000): 0x2177e0 / 0x1f7028 lui 0x3F80 ->
+    0x3F40, 0x18d408 lui 0x43A0 -> 0x43D5, 0x2015d4/d8/e4 nops -> lui 0x3F40 / mtc1 at,f0 / mul.s f12,f12,f0
+    (0x292424/0x292628 are in sceIpuStopDMA/sceIpuSync: PCSX2-only, not needed). Plan: extend the recompiler's
+    [patches] instructions with a runtime switch (emit both translations at function_emitter.cpp:203) so no game
+    code is committed, then 16:9 aspect follows the switch.
+    **Step 1 DONE = patch 37** (fork accbed3): F2 settings window (aspect 4:3 default / 16:9 / stretch / frame
+    pixels; smooth bilinear scaling), PS2X_SETTINGS file (run_game.cmd -> settings.ini, gitignored), window
+    640x480, debugger hidden until F1 (PS2X_DEBUG_PANEL=1), PS2X_HOST_SHOTS host screenshots (logs/settings3,
+    logs/settings_fight: fight 60 fps, 4:3). Window captures of our GL window are white (monitor off), use host shots.
+    Next steps in order: (2) internal resolution 1x-4x live from F2, (3) widescreen switchable patch,
+    (4) forced texture filtering, FXAA, sharpening (post pass on presentTex or host shader).
   - (earlier) **Grok running:** **music-4** (docs/ai/prompts/music-4.md, wt-music, 300 turns): music-3 refuted the wrong
     thing; the SDK copies the sceSifSendCmd extra payload by SIF DMA, and the chain is a handshake (EE cid 0 ->
     IOP handler 0x4f4f4 -> 0x49620 -> IOP cid 2 reply -> EE clears guard 0x1ccd400). Broken links: RPC.cpp

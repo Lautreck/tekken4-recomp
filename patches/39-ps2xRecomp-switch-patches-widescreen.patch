@@ -1,0 +1,342 @@
+diff --git a/ps2xRecomp/include/ps2recomp/types.h b/ps2xRecomp/include/ps2recomp/types.h
+index 9bd687d..5f04616 100644
+--- a/ps2xRecomp/include/ps2recomp/types.h
++++ b/ps2xRecomp/include/ps2recomp/types.h
+@@ -46,6 +46,9 @@ namespace ps2recomp
+         bool isMmio = false;
+         uint32_t mmioAddress = 0;
+         std::string disassembly;
++        // [patches] instruction with a switch: the alternative word and the runtime switch that selects it
++        std::string switchName;
++        uint32_t switchRaw = 0;
+ 
+         struct
+         {
+@@ -136,6 +139,13 @@ namespace ps2recomp
+         int32_t addend;
+     };
+ 
++    // Runtime-switchable instruction patch ([patches] instructions entry with switch = "<name>")
++    struct SwitchPatch
++    {
++        uint32_t value = 0;
++        std::string name;
++    };
++
+     // Jump table entry
+     struct JumpTableEntry
+     {
+@@ -186,6 +196,7 @@ namespace ps2recomp
+         bool patchCache = true;
+         std::vector<std::string> skipFunctions;
+         std::unordered_map<uint32_t, std::string> patches;
++        std::unordered_map<uint32_t, SwitchPatch> switchPatches;
+         std::vector<std::string> stubImplementations;
+         std::vector<std::string> entryPointHints;
+         std::unordered_map<uint32_t, uint32_t> mmioByInstructionAddress;
+diff --git a/ps2xRecomp/src/lib/config_manager.cpp b/ps2xRecomp/src/lib/config_manager.cpp
+index 97dc2dd..cd34b0d 100644
+--- a/ps2xRecomp/src/lib/config_manager.cpp
++++ b/ps2xRecomp/src/lib/config_manager.cpp
+@@ -131,6 +131,16 @@ namespace ps2recomp
+                             }
+ 
+                             const auto &valueField = patch.at("value");
++                            // switch = "<name>": both instructions are emitted and the runtime switch of that name
++                            // (PS2_SWITCH, e.g. a settings option) picks one each time it runs.
++                            if (patch.contains("switch") && patch.at("switch").is_string())
++                            {
++                                const uint32_t raw = valueField.is_string()
++                                                         ? static_cast<uint32_t>(std::stoul(toml::find<std::string>(patch, "value"), nullptr, 0))
++                                                         : static_cast<uint32_t>(toml::find<int64_t>(patch, "value"));
++                                config.switchPatches[address] = SwitchPatch{raw, toml::find<std::string>(patch, "switch")};
++                                continue;
++                            }
+                             if (valueField.is_string())
+                             {
+                                 config.patches[address] = toml::find<std::string>(patch, "value");
+diff --git a/ps2xRecomp/src/lib/function_emitter.cpp b/ps2xRecomp/src/lib/function_emitter.cpp
+index 3192e90..9694045 100644
+--- a/ps2xRecomp/src/lib/function_emitter.cpp
++++ b/ps2xRecomp/src/lib/function_emitter.cpp
+@@ -152,6 +152,9 @@ namespace ps2recomp
+                         ss << "label_" << std::hex << delaySlot->address << std::dec << ":\n";
+                     }
+ 
++                    if (hasDecodedDelaySlot && !delaySlot->switchName.empty())
++                        throw std::runtime_error("switch patch in a branch delay slot is not supported");
++
+                     if (gifDmaKickPlan.valid &&
+                         gifDmaKickPlan.completesInDelaySlot &&
+                         gifDmaKickPlan.branchIndex == i &&
+@@ -202,6 +205,31 @@ namespace ps2recomp
+ 
+                     ss << "    ctx->pc = 0x" << std::hex << inst.address << "u;\n"
+                        << std::dec;
++                    if (!inst.switchName.empty())
++                    {
++                        // Switchable patch: both words are translated, PS2_SWITCH(name) picks one at run time.
++                        const Instruction patched = R5900Decoder().decodeInstruction(inst.address, inst.switchRaw);
++                        if (patched.isBranch || patched.isJump || patched.hasDelaySlot)
++                            throw std::runtime_error("switch patch must not be a branch or jump");
++                        ss << "    if (PS2_SWITCH(\"" << inst.switchName << "\")) { // 0x" << std::hex << inst.switchRaw
++                           << std::dec << "  " << R5900Decoder::disassembleInstruction(patched) << "\n";
++                        ss << "    " << cg.translateInstruction(patched, resolveMemoryAccessHint(patched, constantRegisters))
++                           << "\n    } else {\n";
++                        ss << "    " << cg.translateInstruction(inst, resolveMemoryAccessHint(inst, constantRegisters))
++                           << "\n    }\n";
++                        // A register stays known only when both words leave it with the same value.
++                        ConstantRegisterState whenOn = constantRegisters, whenOff = constantRegisters;
++                        updateConstantRegisters(patched, whenOn);
++                        updateConstantRegisters(inst, whenOff);
++                        for (uint32_t reg = 0; reg < 32u; ++reg)
++                        {
++                            uint32_t on = 0u, off = 0u;
++                            if (!whenOn.read(reg, on) || !whenOff.read(reg, off) || on != off)
++                                whenOff.invalidate(reg);
++                        }
++                        constantRegisters = whenOff;
++                        continue;
++                    }
+                     const MemoryAccessHint memoryHint = resolveMemoryAccessHint(inst, constantRegisters);
+                     ss << "    " << cg.translateInstruction(inst, memoryHint);
+                     if (inst.isMmio)
+diff --git a/ps2xRecomp/src/lib/ps2_recompiler.cpp b/ps2xRecomp/src/lib/ps2_recompiler.cpp
+index 8c1c7c5..31b3507 100644
+--- a/ps2xRecomp/src/lib/ps2_recompiler.cpp
++++ b/ps2xRecomp/src/lib/ps2_recompiler.cpp
+@@ -2167,6 +2167,11 @@ namespace ps2recomp
+                 }
+ 
+                 Instruction inst = m_decoder->decodeInstruction(address, rawInstruction, !m_config.lowMemoryMode);
++                if (auto switchIt = m_config.switchPatches.find(address); switchIt != m_config.switchPatches.end())
++                {
++                    inst.switchName = switchIt->second.name;
++                    inst.switchRaw = switchIt->second.value;
++                }
+ 
+                 auto mmioIt = m_config.mmioByInstructionAddress.find(address);
+                 if (mmioIt != m_config.mmioByInstructionAddress.end())
+diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
+index 2ae763e..4dca9ca 100644
+--- a/ps2xRuntime/CMakeLists.txt
++++ b/ps2xRuntime/CMakeLists.txt
+@@ -386,6 +386,7 @@ add_library(ps2_runtime STATIC
+     src/lib/ps2_input_latency.cpp
+     src/lib/ps2_hud.cpp
+     src/lib/ps2_graphics_settings.cpp
++    src/lib/ps2_switches.cpp
+     src/lib/ps2_iop_host.cpp
+     src/lib/ps2_memory.cpp
+     src/lib/ps2_pad.cpp
+diff --git a/ps2xRuntime/include/ps2_debug_panel.h b/ps2xRuntime/include/ps2_debug_panel.h
+index 9311b4d..ccf1e17 100644
+--- a/ps2xRuntime/include/ps2_debug_panel.h
++++ b/ps2xRuntime/include/ps2_debug_panel.h
+@@ -18,6 +18,7 @@ private:
+     bool m_initialized = false;
+     bool m_visible = true;
+     bool m_settingsVisible = false; // F2
++    bool m_debuggerOff = false;     // PS2X_DEBUG_PANEL=0
+     bool m_showRegisters = true;
+     unsigned int m_memoryAddress = 0x00100000u;
+     unsigned int m_memoryBytes = 0x100u;
+diff --git a/ps2xRuntime/include/ps2_runtime_macros.h b/ps2xRuntime/include/ps2_runtime_macros.h
+index 10f0d2f..9e47036 100644
+--- a/ps2xRuntime/include/ps2_runtime_macros.h
++++ b/ps2xRuntime/include/ps2_runtime_macros.h
+@@ -13,6 +13,7 @@
+ #endif
+ 
+ #include "ps2_runtime.h"
++#include "runtime/ps2_switches.h" // PS2_SWITCH: runtime-switchable instruction patches
+ 
+ static inline int32_t Ps2ExtractEpi32(__m128i v, int index)
+ {
+diff --git a/ps2xRuntime/include/runtime/ps2_graphics_settings.h b/ps2xRuntime/include/runtime/ps2_graphics_settings.h
+index c15304b..3ae61a4 100644
+--- a/ps2xRuntime/include/runtime/ps2_graphics_settings.h
++++ b/ps2xRuntime/include/runtime/ps2_graphics_settings.h
+@@ -18,6 +18,7 @@ namespace ps2_graphics
+         Aspect aspect = Aspect::Ratio4x3;
+         bool smoothScreen = false; // bilinear filtering when the frame is scaled to the window
+         int internalScale = 1;     // GL GS renderer resolution, 1..4 x the PS2's (PS2X_GS_HW_SCALE wins until changed)
++        bool widescreen = false;   // runtime switch "widescreen": the game's 16:9 patch ([patches] in the recompiler config)
+     };
+     constexpr int kMaxInternalScale = 4;
+ 
+diff --git a/ps2xRuntime/include/runtime/ps2_switches.h b/ps2xRuntime/include/runtime/ps2_switches.h
+new file mode 100644
+index 0000000..f80d25e
+--- /dev/null
++++ b/ps2xRuntime/include/runtime/ps2_switches.h
+@@ -0,0 +1,25 @@
++#pragma once
++
++#include <atomic>
++
++// Runtime switches of recompiled code: a [patches] instruction with switch = "<name>" is emitted as
++// if (PS2_SWITCH("<name>")) { patched } else { original }, so an option (the settings window) can turn a game patch
++// on and off while the game runs.
++namespace ps2_switches
++{
++    // The flag of a switch, created off on first use and kept for the process.
++    std::atomic<bool> &flag(const char *name);
++
++    inline void set(const char *name, bool on)
++    {
++        flag(name).store(on, std::memory_order_relaxed);
++    }
++}
++
++// One lookup per call site, then a relaxed load.
++#define PS2_SWITCH(name)                                                  \
++    ([]() -> std::atomic<bool> & {                                        \
++        static std::atomic<bool> &switchFlag = ::ps2_switches::flag(name); \
++        return switchFlag;                                                \
++    }()                                                                   \
++         .load(std::memory_order_relaxed))
+diff --git a/ps2xRuntime/src/lib/ps2_debug_panel.cpp b/ps2xRuntime/src/lib/ps2_debug_panel.cpp
+index ecdf19a..a564460 100644
+--- a/ps2xRuntime/src/lib/ps2_debug_panel.cpp
++++ b/ps2xRuntime/src/lib/ps2_debug_panel.cpp
+@@ -2185,7 +2185,15 @@ namespace
+             ps2_graphics::Settings settings = ps2_graphics::get();
+             bool changed = false;
+             ImGui::SeparatorText("Screen");
+-            static const char *const kAspects[] = {"4:3", "16:9 (stretches a 4:3 picture)", "Stretch to window",
++            if (ImGui::Checkbox("Widescreen 16:9 (game patch by nemesis2000)", &settings.widescreen))
++            {
++                if (settings.widescreen)
++                    settings.aspect = ps2_graphics::Aspect::Ratio16x9;
++                else if (settings.aspect == ps2_graphics::Aspect::Ratio16x9)
++                    settings.aspect = ps2_graphics::Aspect::Ratio4x3;
++                changed = true;
++            }
++            static const char *const kAspects[] = {"4:3", "16:9", "Stretch to window",
+                                                    "Frame pixels (640x448, old default)"};
+             int aspect = static_cast<int>(settings.aspect);
+             if (ImGui::Combo("Aspect ratio", &aspect, kAspects, IM_ARRAYSIZE(kAspects)))
+@@ -2193,6 +2201,8 @@ namespace
+                 settings.aspect = static_cast<ps2_graphics::Aspect>(aspect);
+                 changed = true;
+             }
++            if (settings.aspect == ps2_graphics::Aspect::Ratio16x9 && !settings.widescreen)
++                ImGui::TextDisabled("16:9 without the widescreen patch stretches the picture.");
+             changed |= ImGui::Checkbox("Smooth scaling to the window (bilinear)", &settings.smoothScreen);
+             ImGui::SeparatorText("Rendering (GL renderer)");
+             static const char *const kScales[] = {"1x (PS2: 640x448)", "2x (1280x896)", "3x (1920x1344)",
+@@ -2206,7 +2216,7 @@ namespace
+             if (changed)
+                 ps2_graphics::set(settings);
+             ImGui::Spacing();
+-            ImGui::TextDisabled("Coming next: widescreen, anti-aliasing, sharpening.");
++            ImGui::TextDisabled("Coming next: texture filtering, anti-aliasing, sharpening.");
+             const char *path = std::getenv("PS2X_SETTINGS");
+             if (path && path[0])
+                 ImGui::TextDisabled("Saved to %s", path);
+@@ -2225,10 +2235,12 @@ void PS2DebugPanel::initialize()
+     {
+         rlImGuiSetup(true);
+         m_initialized = true;
+-        // The debugger stays hidden until F1 (it covered the game at start); PS2X_DEBUG_PANEL=1 shows it at start.
++        // The debugger stays hidden until F1 (it covered the game at start); PS2X_DEBUG_PANEL=1 shows it at start,
++        // =0 turns it off (F1 ignored: test runs whose launcher presses F1, host screenshots).
+         // PS2X_SETTINGS_OPEN=1 opens the F2 settings window at start (screenshots of it in test runs).
+         const char *panel = std::getenv("PS2X_DEBUG_PANEL");
+         m_visible = panel && panel[0] == '1';
++        m_debuggerOff = panel && panel[0] == '0';
+         const char *open = std::getenv("PS2X_SETTINGS_OPEN");
+         m_settingsVisible = open && open[0] == '1';
+     }
+@@ -2254,7 +2266,7 @@ void PS2DebugPanel::draw(PS2Runtime &runtime)
+         return;
+     }
+ 
+-    if (IsKeyPressed(KEY_F1))
++    if (IsKeyPressed(KEY_F1) && !m_debuggerOff)
+     {
+         toggleVisible();
+     }
+diff --git a/ps2xRuntime/src/lib/ps2_graphics_settings.cpp b/ps2xRuntime/src/lib/ps2_graphics_settings.cpp
+index a8d3cec..9ead03a 100644
+--- a/ps2xRuntime/src/lib/ps2_graphics_settings.cpp
++++ b/ps2xRuntime/src/lib/ps2_graphics_settings.cpp
+@@ -1,4 +1,5 @@
+ #include "runtime/ps2_graphics_settings.h"
++#include "runtime/ps2_switches.h"
+ 
+ #include <cstdio>
+ #include <cstdlib>
+@@ -45,10 +46,18 @@ namespace ps2_graphics
+                     g_settings.smoothScreen = value != 0;
+                 else if (key == "internal_scale" && value >= 1 && value <= kMaxInternalScale)
+                     g_settings.internalScale = value;
++                else if (key == "widescreen")
++                    g_settings.widescreen = value != 0;
+             }
+             std::fclose(file);
+         }
+ 
++        // Settings that recompiled code reads through runtime switches.
++        void applySwitchesLocked()
++        {
++            ps2_switches::set("widescreen", g_settings.widescreen);
++        }
++
+         void saveLocked()
+         {
+             const char *path = settingsPath();
+@@ -60,6 +69,7 @@ namespace ps2_graphics
+             std::fprintf(file, "aspect=%d\n", static_cast<int>(g_settings.aspect));
+             std::fprintf(file, "smooth_screen=%d\n", g_settings.smoothScreen ? 1 : 0);
+             std::fprintf(file, "internal_scale=%d\n", g_settings.internalScale);
++            std::fprintf(file, "widescreen=%d\n", g_settings.widescreen ? 1 : 0);
+             std::fclose(file);
+         }
+     }
+@@ -68,7 +78,10 @@ namespace ps2_graphics
+     {
+         std::lock_guard<std::mutex> lock(g_mutex);
+         if (!g_loaded)
++        {
+             loadLocked();
++            applySwitchesLocked();
++        }
+         return g_settings;
+     }
+ 
+@@ -77,6 +90,7 @@ namespace ps2_graphics
+         std::lock_guard<std::mutex> lock(g_mutex);
+         g_loaded = true;
+         g_settings = settings;
++        applySwitchesLocked();
+         saveLocked();
+     }
+ 
+diff --git a/ps2xRuntime/src/lib/ps2_switches.cpp b/ps2xRuntime/src/lib/ps2_switches.cpp
+new file mode 100644
+index 0000000..9b7e434
+--- /dev/null
++++ b/ps2xRuntime/src/lib/ps2_switches.cpp
+@@ -0,0 +1,20 @@
++#include "runtime/ps2_switches.h"
++
++#include <memory>
++#include <mutex>
++#include <string>
++#include <unordered_map>
++
++namespace ps2_switches
++{
++    std::atomic<bool> &flag(const char *name)
++    {
++        static std::mutex mutex;
++        static std::unordered_map<std::string, std::unique_ptr<std::atomic<bool>>> flags;
++        std::lock_guard<std::mutex> lock(mutex);
++        std::unique_ptr<std::atomic<bool>> &slot = flags[name];
++        if (!slot)
++            slot = std::make_unique<std::atomic<bool>>(false);
++        return *slot;
++    }
++}

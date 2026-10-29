@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-10-29 07:51 (session 7)_
+_Last updated: 2026-10-29 08:07 (session 7)_
 
 ## Resume here
 To continue, open Claude Code in this folder and say: "read docs/status.md and continue".
@@ -134,8 +134,17 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
     tests 482/482. Readback is still a full glReadPixels per frame (4x = 18 MB); the zero-copy shared texture path
     (PublishSharedTexture) stays inactive. Note: Grok stage-pick's in-progress tools (run_fixed_fight.ps1 waiting for
     frame_req.id) need its frameshot override change; until it lands, Claude tested through run_capture.ps1.
-    Next steps in order: (3) widescreen switchable patch, (4) forced texture filtering, FXAA, sharpening
-    (post pass on presentTex or host shader).
+    **Step 3 DONE = patch 39** (fork 03cc711) + config/ghidra_export.toml [patches]: runtime-switchable
+    instruction patches (recompiler emits if (PS2_SWITCH("widescreen")) {patched} else {original}); the six pnach
+    words (0x2015E4 is div.s f12,f12,f0, not mul.s) are in the config, so REBUILD = ps2_recomp
+    config/ghidra_export.toml (recompile of the HEAD config reproduced generated/ exactly; now 4 functions differ),
+    stage_generated.cmd, build_runtime.cmd. F2 "Widescreen 16:9" (selects 16:9 aspect). logs/ws3: fight 16:9
+    correct proportions, 60 fps at 2x; 2D menus/portraits stretch (as with PCSX2's patch). logs/ws_default:
+    defaults unchanged. PS2X_DEBUG_PANEL=0 disables F1 (run_capture.ps1 still presses F1 at 3 s, which now SHOWS the
+    debugger when it lands: drop that press once Grok stage-pick releases run_capture.ps1).
+    CAUTION: stage_generated.cmd copies ALL runtime/*_overrides.cpp, incl. Grok's uncommitted stage-pick WIP of
+    tekken4_frameshot_overrides.cpp; the default build got the committed version back by hand.
+    Next step: (4) forced texture filtering, FXAA, sharpening (post pass on presentTex or host shader).
   - (earlier) **Grok running:** **music-4** (docs/ai/prompts/music-4.md, wt-music, 300 turns): music-3 refuted the wrong
     thing; the SDK copies the sceSifSendCmd extra payload by SIF DMA, and the chain is a handshake (EE cid 0 ->
     IOP handler 0x4f4f4 -> 0x49620 -> IOP cid 2 reply -> EE clears guard 0x1ccd400). Broken links: RPC.cpp

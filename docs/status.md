@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-10-29 07:23 (session 7)_
+_Last updated: 2026-10-29 07:51 (session 7)_
 
 ## Resume here
 To continue, open Claude Code in this folder and say: "read docs/status.md and continue".
@@ -125,8 +125,17 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
     pixels; smooth bilinear scaling), PS2X_SETTINGS file (run_game.cmd -> settings.ini, gitignored), window
     640x480, debugger hidden until F1 (PS2X_DEBUG_PANEL=1), PS2X_HOST_SHOTS host screenshots (logs/settings3,
     logs/settings_fight: fight 60 fps, 4:3). Window captures of our GL window are white (monitor off), use host shots.
-    Next steps in order: (2) internal resolution 1x-4x live from F2, (3) widescreen switchable patch,
-    (4) forced texture filtering, FXAA, sharpening (post pass on presentTex or host shader).
+    **Step 2 DONE = patch 38** (fork 3752136): internal resolution 1x-4x in F2, applied live at the next present
+    (targets re-created and blitted), scaled host->target uploads (movie), frontend stride / host texture follow
+    the frame size, GSHwBackend::SetAlignSpriteX turned on by the Tekken override (PCSX2 GameIndex alignSprite:
+    the display copy's 64x16 tiles end at x.5 at x 128/448 -> black host column at 2x/4x; found with
+    GOW_GS_HW_RTDUMP* dumps: fbp 0 clean, fbp 210 column 255/895 unwritten). PS2X_SCALE_AT=<s>:<n> test hook.
+    logs/scale4: live 1x->2x->4x->3x, fight 60 fps (GS 80 ms at 2x, ~190 at 4x), no seams; logs/scale_1x 60 fps;
+    tests 482/482. Readback is still a full glReadPixels per frame (4x = 18 MB); the zero-copy shared texture path
+    (PublishSharedTexture) stays inactive. Note: Grok stage-pick's in-progress tools (run_fixed_fight.ps1 waiting for
+    frame_req.id) need its frameshot override change; until it lands, Claude tested through run_capture.ps1.
+    Next steps in order: (3) widescreen switchable patch, (4) forced texture filtering, FXAA, sharpening
+    (post pass on presentTex or host shader).
   - (earlier) **Grok running:** **music-4** (docs/ai/prompts/music-4.md, wt-music, 300 turns): music-3 refuted the wrong
     thing; the SDK copies the sceSifSendCmd extra payload by SIF DMA, and the chain is a handshake (EE cid 0 ->
     IOP handler 0x4f4f4 -> 0x49620 -> IOP cid 2 reply -> EE clears guard 0x1ccd400). Broken links: RPC.cpp

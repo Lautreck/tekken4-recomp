@@ -1,0 +1,419 @@
+diff --git a/ps2xRuntime/include/runtime/gs/gs_hw_backend.h b/ps2xRuntime/include/runtime/gs/gs_hw_backend.h
+index 97f05e1..277f279 100644
+--- a/ps2xRuntime/include/runtime/gs/gs_hw_backend.h
++++ b/ps2xRuntime/include/runtime/gs/gs_hw_backend.h
+@@ -38,6 +38,12 @@ public:
+     void SnapshotVram(std::vector<uint8_t> &out) const override;
+     GSTransferSnapshot GetTransferSnapshot() const override;
+ 
++    // Above 1x internal resolution, sprite X edges snap to the GS's native pixel boundaries, so the host pixels match the
++    // native pixels the GS covers (PCSX2's GameIndex gsHWFixes alignSprite). A game override turns it on: a sprite that ends
++    // at x.5 still covers native pixel x, but at 2x nothing covers the host column past x.5 (vertical lines).
++#define PS2X_GS_HW_HAS_ALIGN_SPRITE 1
++    static void SetAlignSpriteX(bool enabled);
++
+ private:
+     struct Impl;
+     std::unique_ptr<Impl> m_impl;
+diff --git a/ps2xRuntime/include/runtime/ps2_graphics_settings.h b/ps2xRuntime/include/runtime/ps2_graphics_settings.h
+index aa392f2..c15304b 100644
+--- a/ps2xRuntime/include/runtime/ps2_graphics_settings.h
++++ b/ps2xRuntime/include/runtime/ps2_graphics_settings.h
+@@ -17,7 +17,9 @@ namespace ps2_graphics
+     {
+         Aspect aspect = Aspect::Ratio4x3;
+         bool smoothScreen = false; // bilinear filtering when the frame is scaled to the window
++        int internalScale = 1;     // GL GS renderer resolution, 1..4 x the PS2's (PS2X_GS_HW_SCALE wins until changed)
+     };
++    constexpr int kMaxInternalScale = 4;
+ 
+     Settings get();
+     void set(const Settings &settings);
+diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
+index 7db082d..29a58a2 100644
+--- a/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
+@@ -5,6 +5,7 @@
+ #include "gs_gl.h"
+ #include "../gs_gpu_helpers.h"
+ #include "runtime/gs/gs_shared_present.h"
++#include "runtime/ps2_graphics_settings.h"
+ 
+ #include <map>
+ #include <algorithm>
+@@ -19,11 +20,14 @@
+ #include <string>
+ #include <unordered_map>
+ #include <vector>
++#include <atomic>
+ 
+ namespace
+ {
+     using namespace GSGL;
+ 
++    std::atomic<bool> g_alignSpriteX{false}; // GSHwBackend::SetAlignSpriteX
++
+     constexpr GLenum kArrayBuffer = 0x8892;
+     constexpr GLenum kFloat = 0x1406;
+     constexpr GLenum kColorAttachment0 = 0x8CE0;
+@@ -40,6 +44,7 @@ namespace
+     constexpr GLenum kConstantColor = 0x8001, kOneMinusConstantColor = 0x8002;
+     constexpr GLenum kFuncAdd = 0x8006, kFuncReverseSubtract = 0x800B;
+     constexpr GLbitfield kColorBufferBit = 0x4000, kDepthBufferBit = 0x100;
++    constexpr GLenum kReadFramebuffer = 0x8CA8, kDrawFramebuffer = 0x8CA9;
+     constexpr GLenum kNever = 0x200, kLess = 0x201, kLEqual = 0x203, kGreater = 0x204, kGEqual = 0x206, kAlways = 0x207;
+     constexpr GLenum kTexture0 = 0x84C0;
+     constexpr GLint kRepeat = 0x2901;
+@@ -513,8 +518,10 @@ struct GSHwBackend::Impl
+     uint8_t *vram = nullptr;
+     uint32_t vramSize = 0;
+ 
+-    // Tekken 4 port: 1 by default (RAM frames have a 640-pixel stride; Tekken's frame copy repeats at 2).
++    // Host pixels per PS2 pixel (internal resolution): ps2_graphics::Settings::internalScale, changed live by
++    // applyScale at a present.
+     float scale = 1.0f;
++    int settingsScale = 1; // the settings value last applied
+     GLuint program = 0, vao = 0, vbo = 0;
+     GLint locInvSize = -1, locTex = -1, locTexSize = -1, locTexDim = -1, locTme = -1, locFst = -1, locTfx = -1, locTcc = -1, locIip = -1,
+           locAte = -1, locFailTint = -1, locAtst = -1, locAref = -1, locPass = -1, locBlendScale = -1, locRtTex24 = -1, locTa0 = -1, locTa1 = -1, locReinterp = -1, locDate = -1, locDatm = -1, locDest = -1, locZTex = -1, locZMax = -1, locTables = -1, locRtColor = -1, locPalette = -1, locTexFmt = -1, locTexFmt2 = -1,
+@@ -769,6 +776,9 @@ struct GSHwBackend::Impl
+                 g.BindVertexArray(vao);
+             }
+         }
++        // The settings window's internal resolution; PS2X_GS_HW_SCALE wins until the player changes it.
++        settingsScale = ps2_graphics::get().internalScale;
++        scale = static_cast<float>(settingsScale);
+         if (const char *s = std::getenv("PS2X_GS_HW_SCALE"))
+             scale = std::max(1.0f, static_cast<float>(std::atof(s)));
+         std::fprintf(stderr, "[gs-hw] render-target renderer ready, scale %.2f (%s)\n", scale,
+@@ -871,6 +881,53 @@ struct GSHwBackend::Impl
+         std::fprintf(stderr, "[gs-hw] render target fbp=%u fbw=%u -> %ux%u\n", fbp, t.fbw, t.glW, t.glH);
+     }
+ 
++    // Internal resolution change: every target gets new textures at the new scale and its picture (linear) and depth
++    // (nearest) are blitted over, so buffers the game keeps across frames survive the switch.
++    void applyScale(float newScale)
++    {
++        if (newScale == scale)
++            return;
++        const Api &g = gl();
++        scale = newScale;
++        for (RenderTarget &t : targets)
++        {
++            const RenderTarget old = t;
++            t.color = t.depth = t.fbo = 0;
++            t.glW = static_cast<uint32_t>(std::ceil(t.pxW * scale));
++            t.glH = static_cast<uint32_t>(std::ceil(t.pxH * scale));
++            g.GenTextures(1, &t.color);
++            g.BindTexture(kTexture2D, t.color);
++            g.TexImage2D(kTexture2D, 0, static_cast<GLint>(kRgba8), t.glW, t.glH, 0, kRgba, kUnsignedByte, nullptr);
++            g.TexParameteri(kTexture2D, kTextureMinFilter, kLinear);
++            g.TexParameteri(kTexture2D, kTextureMagFilter, kLinear);
++            g.GenFramebuffers(1, &t.fbo);
++            g.BindFramebuffer(kFramebuffer, t.fbo);
++            g.FramebufferTexture2D(kFramebuffer, kColorAttachment0, kTexture2D, t.color, 0);
++            if (old.depth)
++            {
++                g.GenTextures(1, &t.depth);
++                g.BindTexture(kTexture2D, t.depth);
++                g.TexImage2D(kTexture2D, 0, static_cast<GLint>(kDepthComponent32F), t.glW, t.glH, 0, kDepthComponent, kFloat, nullptr);
++                g.TexParameteri(kTexture2D, kTextureMinFilter, kNearest);
++                g.TexParameteri(kTexture2D, kTextureMagFilter, kNearest);
++                g.FramebufferTexture2D(kFramebuffer, kDepthAttachment, kTexture2D, t.depth, 0);
++            }
++            g.BindFramebuffer(kReadFramebuffer, old.fbo);
++            g.BindFramebuffer(kDrawFramebuffer, t.fbo);
++            g.Disable(kScissorTest);
++            g.BlitFramebuffer(0, 0, static_cast<GLint>(old.glW), static_cast<GLint>(old.glH), 0, 0,
++                              static_cast<GLint>(t.glW), static_cast<GLint>(t.glH), kColorBufferBit, static_cast<GLenum>(kLinear));
++            if (old.depth)
++                g.BlitFramebuffer(0, 0, static_cast<GLint>(old.glW), static_cast<GLint>(old.glH), 0, 0,
++                                  static_cast<GLint>(t.glW), static_cast<GLint>(t.glH), kDepthBufferBit, static_cast<GLenum>(kNearest));
++            g.BindFramebuffer(kFramebuffer, 0);
++            RenderTarget gone = old;
++            destroy(gone);
++            ++t.version;
++        }
++        std::fprintf(stderr, "[gs-hw] internal resolution %.0fx\n", scale);
++    }
++
+     void attachDepth(RenderTarget &t, uint32_t zbp)
+     {
+         const Api &g = gl();
+@@ -1337,11 +1394,15 @@ struct GSHwBackend::Impl
+         // pixel (x, y) maps to target pixel (x, y) for any width up to the target's, like draws (target())
+         if (!t || t->psm != dpsm || t->fbw < c.bitbltbuf.dbw)
+             return nullptr;
+-        if (c.trxpos.dsax + c.trxreg.rrw > t->pxW || c.trxpos.dsay + c.trxreg.rrh > t->pxH || scale != 1.0f)
++        if (c.trxpos.dsax + c.trxreg.rrw > t->pxW || c.trxpos.dsay + c.trxreg.rrh > t->pxH)
+             return nullptr;
+         return t;
+     }
+ 
++    // Above 1x an upload goes into this texture at PS2 size first and is blitted into the target, scaled.
++    GLuint rtUploadTex = 0, rtUploadFbo = 0;
++    uint32_t rtUploadTexW = 0, rtUploadTexH = 0;
++
+     void applyRtUpload()
+     {
+         if (!rtUploadPending)
+@@ -1365,9 +1426,40 @@ struct GSHwBackend::Impl
+                     line[x] = GSCpuInternal::Rgba5551ToRgba8888(static_cast<uint16_t>(line[x]));
+         }
+         const Api &g = gl();
+-        g.BindTexture(kTexture2D, t->color);
+         g.PixelStorei(kUnpackAlignment, 4);
+-        g.TexSubImage2D(kTexture2D, 0, static_cast<GLint>(x0), static_cast<GLint>(y0), w, h, kRgba, kUnsignedByte, pixels.data());
++        if (scale == 1.0f)
++        {
++            g.BindTexture(kTexture2D, t->color);
++            g.TexSubImage2D(kTexture2D, 0, static_cast<GLint>(x0), static_cast<GLint>(y0), w, h, kRgba, kUnsignedByte, pixels.data());
++        }
++        else
++        {
++            if (!rtUploadTex || rtUploadTexW < w || rtUploadTexH < h)
++            {
++                if (rtUploadTex)
++                    g.DeleteTextures(1, &rtUploadTex);
++                if (!rtUploadFbo)
++                    g.GenFramebuffers(1, &rtUploadFbo);
++                rtUploadTexW = std::max(rtUploadTexW, w);
++                rtUploadTexH = std::max(rtUploadTexH, h);
++                g.GenTextures(1, &rtUploadTex);
++                g.BindTexture(kTexture2D, rtUploadTex);
++                g.TexImage2D(kTexture2D, 0, static_cast<GLint>(kRgba8), rtUploadTexW, rtUploadTexH, 0, kRgba, kUnsignedByte, nullptr);
++                g.TexParameteri(kTexture2D, kTextureMinFilter, kNearest);
++                g.TexParameteri(kTexture2D, kTextureMagFilter, kNearest);
++                g.BindFramebuffer(kFramebuffer, rtUploadFbo);
++                g.FramebufferTexture2D(kFramebuffer, kColorAttachment0, kTexture2D, rtUploadTex, 0);
++            }
++            g.BindTexture(kTexture2D, rtUploadTex);
++            g.TexSubImage2D(kTexture2D, 0, 0, 0, w, h, kRgba, kUnsignedByte, pixels.data());
++            g.BindFramebuffer(kReadFramebuffer, rtUploadFbo);
++            g.BindFramebuffer(kDrawFramebuffer, t->fbo);
++            g.Disable(kScissorTest);
++            g.BlitFramebuffer(0, 0, static_cast<GLint>(w), static_cast<GLint>(h), static_cast<GLint>(std::lround(x0 * scale)),
++                              static_cast<GLint>(std::lround(y0 * scale)), static_cast<GLint>(std::lround((x0 + w) * scale)),
++                              static_cast<GLint>(std::lround((y0 + h) * scale)), kColorBufferBit, static_cast<GLenum>(kNearest));
++            g.BindFramebuffer(kFramebuffer, 0);
++        }
+         t->usedW = std::max(t->usedW, x0 + w);
+         t->usedH = std::max(t->usedH, y0 + h);
+         ++t->version;
+@@ -1951,8 +2043,10 @@ struct GSHwBackend::Impl
+             GSDrawState sp = s; // sprites carry texel UVs, never STQ
+             (void)sp;
+             GSVertex corner[4] = {a, a, a, a};
+-            const float xs[2] = {a.x, c.x}, ys[2] = {a.y, c.y};
+-            const float us[2] = {u0, u1}, vs[2] = {v0, v1};
++            float xs[2] = {a.x, c.x};
++            const float ys[2] = {a.y, c.y};
++            float us[2] = {u0, u1};
++            const float vs[2] = {v0, v1};
+             // the texel coordinates of the first and last pixel the GS covers (pixel n is covered when lo <= n < hi);
+             // a sprite covering no pixel on the GS keeps its whole range
+             const auto sampled = [](float p0, float p1, float t0, float t1, float &lo, float &hi)
+@@ -1969,6 +2063,18 @@ struct GSHwBackend::Impl
+             float cu0, cu1, cv0, cv1;
+             sampled(a.x - s.context.xyoffset.ofx / 16.0f, c.x - s.context.xyoffset.ofx / 16.0f, u0, u1, cu0, cu1);
+             sampled(a.y - s.context.xyoffset.ofy / 16.0f, c.y - s.context.xyoffset.ofy / 16.0f, v0, v1, cv0, cv1);
++            // SetAlignSpriteX: the GS covers native pixels [ceil(x0), ceil(x1)); snap both edges there (the texel
++            // coordinates follow the sprite's own mapping), so the host pixels covered are exactly those of the native ones.
++            if (scale != 1.0f && g_alignSpriteX.load(std::memory_order_relaxed) && xs[1] != xs[0])
++            {
++                const float off = s.context.xyoffset.ofx / 16.0f, du = (us[1] - us[0]) / (xs[1] - xs[0]);
++                const float x0 = xs[0];
++                for (int i = 0; i < 2; ++i)
++                {
++                    xs[i] = std::ceil(xs[i] - off) + off;
++                    us[i] = u0 + (xs[i] - x0) * du;
++                }
++            }
+             // A picture drawn as strips (full-screen passes, logos, fonts) continues across each strip seam: there the clamp
+             // would repeat the last sampled texel for the host pixels between the two strips' GS sample points (a step at
+             // every seam). The side a sprite shares with the previous sprite of the batch, with the texture continuing
+@@ -2656,6 +2762,11 @@ struct GSHwBackend::Impl
+ };
+ 
+ GSHwBackend::GSHwBackend() : m_impl(std::make_unique<Impl>()) {}
++
++void GSHwBackend::SetAlignSpriteX(bool enabled)
++{
++    g_alignSpriteX.store(enabled, std::memory_order_relaxed);
++}
+ GSHwBackend::~GSHwBackend() = default;
+ 
+ void GSHwBackend::Initialize(uint8_t *vram, uint32_t vramSize)
+@@ -2855,6 +2966,11 @@ PresentationFrame GSHwBackend::Present(const GSPresentationRequest &request)
+     if (!d.ensure())
+         return frame;
+     d.flushPending(Impl::WhyPresent);
++    if (const int wanted = ps2_graphics::get().internalScale; wanted != d.settingsScale)
++    {
++        d.settingsScale = wanted;
++        d.applyScale(static_cast<float>(wanted));
++    }
+     ++d.presentCount;
+     d.dumpAfterSkip = false;
+     d.frameBatch = 0;
+diff --git a/ps2xRuntime/src/lib/gs/gs_frontend.cpp b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
+index c658047..ce0ada6 100644
+--- a/ps2xRuntime/src/lib/gs/gs_frontend.cpp
++++ b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
+@@ -631,7 +631,8 @@ bool GS::copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
+     outPixels.resize(packedRowBytes * static_cast<size_t>(outHeight));
+     if (outWidth != 0u && outHeight != 0u)
+     {
+-        const size_t sourceRowBytes = static_cast<size_t>(kHostFrameWidth) * 4u;
++        // Backends pad narrower frames to a 640-pixel stride; a frame above 1x internal resolution is packed.
++        const size_t sourceRowBytes = static_cast<size_t>(std::max(kHostFrameWidth, outWidth)) * 4u;
+         for (uint32_t y = 0; y < outHeight; ++y)
+         {
+             const size_t srcOffset = static_cast<size_t>(y) * sourceRowBytes;
+diff --git a/ps2xRuntime/src/lib/ps2_debug_panel.cpp b/ps2xRuntime/src/lib/ps2_debug_panel.cpp
+index c7e5712..ecdf19a 100644
+--- a/ps2xRuntime/src/lib/ps2_debug_panel.cpp
++++ b/ps2xRuntime/src/lib/ps2_debug_panel.cpp
+@@ -2194,11 +2194,19 @@ namespace
+                 changed = true;
+             }
+             changed |= ImGui::Checkbox("Smooth scaling to the window (bilinear)", &settings.smoothScreen);
++            ImGui::SeparatorText("Rendering (GL renderer)");
++            static const char *const kScales[] = {"1x (PS2: 640x448)", "2x (1280x896)", "3x (1920x1344)",
++                                                  "4x (2560x1792)"};
++            int scaleIndex = std::clamp(settings.internalScale, 1, ps2_graphics::kMaxInternalScale) - 1;
++            if (ImGui::Combo("Internal resolution", &scaleIndex, kScales, IM_ARRAYSIZE(kScales)))
++            {
++                settings.internalScale = scaleIndex + 1;
++                changed = true;
++            }
+             if (changed)
+                 ps2_graphics::set(settings);
+             ImGui::Spacing();
+-            ImGui::TextDisabled("Coming next: internal resolution, widescreen,");
+-            ImGui::TextDisabled("anti-aliasing, sharpening.");
++            ImGui::TextDisabled("Coming next: widescreen, anti-aliasing, sharpening.");
+             const char *path = std::getenv("PS2X_SETTINGS");
+             if (path && path[0])
+                 ImGui::TextDisabled("Saved to %s", path);
+diff --git a/ps2xRuntime/src/lib/ps2_graphics_settings.cpp b/ps2xRuntime/src/lib/ps2_graphics_settings.cpp
+index b9aa3ab..a8d3cec 100644
+--- a/ps2xRuntime/src/lib/ps2_graphics_settings.cpp
++++ b/ps2xRuntime/src/lib/ps2_graphics_settings.cpp
+@@ -43,6 +43,8 @@ namespace ps2_graphics
+                     g_settings.aspect = static_cast<Aspect>(value);
+                 else if (key == "smooth_screen")
+                     g_settings.smoothScreen = value != 0;
++                else if (key == "internal_scale" && value >= 1 && value <= kMaxInternalScale)
++                    g_settings.internalScale = value;
+             }
+             std::fclose(file);
+         }
+@@ -57,6 +59,7 @@ namespace ps2_graphics
+                 return;
+             std::fprintf(file, "aspect=%d\n", static_cast<int>(g_settings.aspect));
+             std::fprintf(file, "smooth_screen=%d\n", g_settings.smoothScreen ? 1 : 0);
++            std::fprintf(file, "internal_scale=%d\n", g_settings.internalScale);
+             std::fclose(file);
+         }
+     }
+diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
+index f49c70a..03955b7 100644
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -423,7 +423,7 @@ static void UploadFrame(Texture2D &tex, PS2Runtime *rt, uint32_t &outWidth, uint
+                                                    &sourceFbp,
+                                                    &usedPreferredDisplaySource))
+     {
+-        Image blank = GenImageColor(FB_WIDTH, FB_HEIGHT, MAGENTA);
++        Image blank = GenImageColor(tex.width, tex.height, MAGENTA);
+         UpdateTexture(tex, blank.data);
+         UnloadImage(blank);
+         outWidth = FB_WIDTH;
+@@ -459,13 +459,27 @@ static void UploadFrame(Texture2D &tex, PS2Runtime *rt, uint32_t &outWidth, uint
+     s_lastWidth = width;
+     s_lastHeight = height;
+ 
++    // Above 1x internal resolution the frame is larger than 640x512: the texture grows to hold it (never shrinks;
++    // the present draws only the frame's own rectangle). A new texture starts with the point filter.
++    if (width > static_cast<uint32_t>(tex.width) || height > static_cast<uint32_t>(tex.height))
++    {
++        const int texWidth = std::max<int>(tex.width, static_cast<int>(width));
++        const int texHeight = std::max<int>(tex.height, static_cast<int>(height));
++        UnloadTexture(tex);
++        Image blank = GenImageColor(texWidth, texHeight, BLANK);
++        tex = LoadTextureFromImage(blank);
++        UnloadImage(blank);
++        s_uploadBuffer.assign(static_cast<size_t>(texWidth) * texHeight * 4u, 0u);
++    }
++    const uint32_t texWidth = static_cast<uint32_t>(tex.width);
++    const uint32_t texHeight = static_cast<uint32_t>(tex.height);
+     std::fill(s_uploadBuffer.begin(), s_uploadBuffer.end(), 0u);
+     if (!s_scratch.empty() && width != 0u && height != 0u)
+     {
+-        const uint32_t copyWidth = std::min<uint32_t>(width, FB_WIDTH);
+-        const uint32_t copyHeight = std::min<uint32_t>(height, FB_HEIGHT);
++        const uint32_t copyWidth = std::min<uint32_t>(width, texWidth);
++        const uint32_t copyHeight = std::min<uint32_t>(height, texHeight);
+         const size_t srcRowBytes = static_cast<size_t>(width) * 4u;
+-        const size_t dstRowBytes = static_cast<size_t>(FB_WIDTH) * 4u;
++        const size_t dstRowBytes = static_cast<size_t>(texWidth) * 4u;
+         const size_t copyRowBytes = static_cast<size_t>(copyWidth) * 4u;
+         for (uint32_t y = 0; y < copyHeight; ++y)
+         {
+@@ -2414,6 +2428,7 @@ void PS2Runtime::run()
+     ps2_input_latency::attachWindow(GetWindowHandle());
+ 
+     bool smoothFrameTex = false; // raylib's default filter is point
++    unsigned int filteredTexId = frameTex.id;
+ 
+     // PS2X_HOST_SHOTS=<s>,<s>,...: the window's final picture (aspect, HUD, settings window) at those seconds as
+     // host_<s>s.png in the working directory. Read back before the swap, so it works with the monitor off; the
+@@ -2429,8 +2444,27 @@ void PS2Runtime::run()
+     }
+     size_t nextHostShot = 0;
+     const auto hostShotStart = std::chrono::steady_clock::now();
+-    auto takeHostShot = [&hostShotTimes, &nextHostShot, hostShotStart]()
++    // PS2X_SCALE_AT=<s>:<scale>,...: changes the internal resolution at those seconds as the F2 window would (tests).
++    std::vector<std::pair<double, int>> scaleSteps;
++    if (const char *steps = std::getenv("PS2X_SCALE_AT"))
++    {
++        std::stringstream list(steps);
++        for (std::string item; std::getline(list, item, ',');)
++            if (const size_t colon = item.find(':'); colon != std::string::npos)
++                scaleSteps.emplace_back(std::atof(item.substr(0, colon).c_str()), std::atoi(item.c_str() + colon + 1));
++        std::sort(scaleSteps.begin(), scaleSteps.end());
++    }
++    size_t nextScaleStep = 0;
++    auto takeHostShot = [&hostShotTimes, &nextHostShot, hostShotStart, &scaleSteps, &nextScaleStep]()
+     {
++        const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - hostShotStart).count();
++        if (nextScaleStep < scaleSteps.size() && elapsed >= scaleSteps[nextScaleStep].first)
++        {
++            ps2_graphics::Settings settings = ps2_graphics::get();
++            settings.internalScale = std::clamp(scaleSteps[nextScaleStep].second, 1, ps2_graphics::kMaxInternalScale);
++            ps2_graphics::set(settings);
++            ++nextScaleStep;
++        }
+         if (nextHostShot >= hostShotTimes.size() ||
+             std::chrono::duration<double>(std::chrono::steady_clock::now() - hostShotStart).count() <
+                 hostShotTimes[nextHostShot])
+@@ -2445,15 +2479,16 @@ void PS2Runtime::run()
+         ++nextHostShot;
+     };
+ 
+-    auto presentHostFrame = [this, &frameTex, &smoothFrameTex, &takeHostShot]()
++    auto presentHostFrame = [this, &frameTex, &smoothFrameTex, &filteredTexId, &takeHostShot]()
+     {
+         uint32_t presentWidth = FB_WIDTH;
+         uint32_t presentHeight = DEFAULT_DISPLAY_HEIGHT;
+         UploadFrame(frameTex, this, presentWidth, presentHeight);
+         const ps2_graphics::Settings graphics = ps2_graphics::get();
+-        if (graphics.smoothScreen != smoothFrameTex)
++        if (graphics.smoothScreen != smoothFrameTex || frameTex.id != filteredTexId)
+         {
+             smoothFrameTex = graphics.smoothScreen;
++            filteredTexId = frameTex.id; // UploadFrame replaces the texture when the frame grows
+             SetTextureFilter(frameTex, smoothFrameTex ? TEXTURE_FILTER_BILINEAR : TEXTURE_FILTER_POINT);
+         }
+         // Keys posted during the readback are dispatched before the swap, so the

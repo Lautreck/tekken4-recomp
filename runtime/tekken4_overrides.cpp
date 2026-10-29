@@ -17,6 +17,9 @@
 #include "runtime/ps2_hud.h"
 #define TEKKEN4_HAS_HUD 1
 #endif
+#if __has_include("runtime/gs/gs_hw_backend.h")
+#include "runtime/gs/gs_hw_backend.h" // PS2X_GS_HW_HAS_ALIGN_SPRITE from patch 38
+#endif
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -1236,6 +1239,11 @@ namespace tekken4
 
     void apply(PS2Runtime &runtime)
     {
+#ifdef PS2X_GS_HW_HAS_ALIGN_SPRITE
+        // PCSX2 GameIndex SCES-50878 gsHWFixes alignSprite ("fixes vertical lines"): the display copy's 64x16 tiles
+        // end some columns at x.5 (x 128 and 448), which leaves a host column uncovered above 1x.
+        GSHwBackend::SetAlignSpriteX(true);
+#endif
         if (const char *sound = std::getenv("TEKKEN4_SOUND"); sound && std::strcmp(sound, "1") == 0)
         {
             const std::filesystem::path iso = findIsoPath();

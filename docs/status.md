@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-10-29 09:07 (session 7)_
+_Last updated: 2026-10-29 09:31 (session 7)_
 
 ## Resume here
 To continue, open Claude Code in this folder and say: "read docs/status.md and continue".
@@ -120,7 +120,11 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
     until the core is re-armed. Patch 36's 'leave enable set' workaround is gone. Claude's check
     (logs/spu2irq_claude, _claude2): music continuous, fight 60/60 s69-109 (TEKKEN4_HUD_LOG), tests 482/482.
     Note: stdout.txt of a killed run loses its buffered tail (perf lines stopped at s62); use TEKKEN4_HUD_LOG.
-    Grok queue now empty. Then Grok **menu-pick** started 08:33 (docs/ai/prompts/menu-pick.md, 150 turns).
+    Grok queue now empty. Then Grok **menu-pick** (08:33-09:3x) DONE and committed: run_fixed_fight is fully
+    closed-loop (tools/menu_screen.py + logs/menu_refs, gitignored), 8/8 runs reach the chosen stage, ~93 s per run,
+    'menu step failed: <step>' / 'stage pick failed' exit 2. Open: the banner still prints the old '~73 s' fight
+    time; the building sweep reference (logs/grok/sweep-building/frame_77s.bmp) shows Hwoarang, not Yoshimitsu.
+    Grok idle.
     Tried and dropped: resizing the window to 16:9 on the aspect setting (SetWindowSize gave 1290x706 on this
     multi-display / DPI desktop, logs/shape2); letterboxing already shows the right shape in any window.
   - **GRAPHICS GOAL (user 2026-10-29: "all" of higher resolution, widescreen 16:9, smoothing/filtering, in-game

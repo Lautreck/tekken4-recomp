@@ -98,15 +98,56 @@ external\pytools\Scripts\python.exe -I tools\wav_sections.py logs\music_ab_fix_s
 
 ## Not fixed / found on the way
 
-- **Effect voices that never stop (pre-existing, also with `TEKKEN4_BGM=0`).** Every menu press keys a core 1
-  voice (SSA 0xcef0, 0x77a0, 0x9dc0, ...) that plays on through the whole 1.15 MB bank at 0x5010. That bank (it
-  matches the disc byte for byte, LSN 20188) has no ADPCM end flag between 0x5010 and 0xb6030, and the SSAs point
-  into the middle of continuous audio. The EE frees voices only through ENDX (reply words 1/2 of call 0x100 ->
-  FUN_00223ea0) and almost never sends KOFF (1 in 50 s). So the voices pile up: the full mix rises to rms ~0.6
-  and clips in the fight (5-9 % of samples at the rail) and drowns the music. This has to be checked against
-  PCSX2: what stops these voices there (an EE-side duration, different SSAs, or a different bank layout).
+- ~~Effect voices that never stop~~: fixed, see "Never-ending voices" below.
 - The host warning "AUDIO: Failed to initialize playback device" only means there is no output device. At night
   the RME ADI-2 DAC endpoints are all "Unknown" (off); only a microphone is present. The IOP mix and the WAV do not
   depend on the device (`MixedOutput::push` writes the WAV first, `pumpDevice` waits for `IsAudioDeviceReady`).
 - The core 1 voices 20-23 (22 kHz, ring 0x1b8000, IRQ ping-pong) are a second stream that stays silent in these
   scenes (voice lines?). It is refilled the same way.
+
+## Never-ending voices (fixed 2026-10-29, fork commit `e3349b1`)
+
+**Symptom.** Every menu press keyed a core 1 voice that never stopped and played on through the whole bank (SSA
+0xcef0, 0x77a0, 0x9dc0, ... in the middle of continuous audio). The bank at SPU 0x5010 had no ADPCM end flag
+between 0x5010 and 0xb6030, and the EE frees voices only through ENDX. So the voices piled up: the mix reached rms
+~0.6 and 5-9 % of the fight's samples hit the rail, which drowned the music.
+
+**Cause: the IOP read the wrong part of the disc.** The SPU RAM bank matched the disc byte for byte, but it came
+from the wrong sectors. At boot zsiopdrv calls `sceCdSearchFile("\TEKKEN\DATA.BIN;1")` (IOP 0x488d4) and keeps the
+LSN at 0x521a0. It then reads every sound bank and the BGM as `0x521a0 + sector` (CD thread 0x48e1c). The cdvd
+HLE answered from the *virtual* ISO it builds from the extracted files (there DATA.BIN sits at LBN 1106), or
+otherwise from hard-coded PAL numbers (LBN 1236). But `sceCdRead` reads the *real* image, where the US DATA.BIN
+starts at LBN 401. So every sound read landed 705 sectors too far: the first bank came from LSN 20188 instead of
+19483. LSN 19483 holds the real bank: blocks with loop-start (0x04) and end (0x01) flags. The data at 20188 is
+other audio (flag 0x02 everywhere). ioman's `cdrom0:` open had the same PAL constant.
+
+**Fix (`ps2xIOP: cdvd/ioman look file paths up in the disc image's ISO9660 directory`).** With a disc image,
+`sceCdSearchFile` and ioman's `cdrom0:` open now resolve the path in the image's own ISO9660 directory
+(`imports/iop_iso9660.h`). The virtual ISO is only used without an image, so no numbers from either disc remain.
+Log: `[cdvd] sceCdSearchFile \TEKKEN\DATA.BIN;1 -> LBN 401 size 2695536640`, first bank read
+`lsn=19483`. The BGM is read through the same base, so before this fix the music also came from the wrong place
+on the disc (it happened to be music, about 705 sectors later).
+
+**Evidence** (`tools\run_music_ab.ps1 -Prefix music_v2a -Only fix_full,fix_stream,fix_fx`, same key path and
+sections as above; "before" = `music_ab_fix_full`, the state after the BGM fix and before this one).
+
+| section | before: full rms / clipped | **after: full rms / clipped** | after: stream (music) only | after: effects only |
+|---|---|---|---|---|
+| title 9-12.5 s | 0.202 / 0 | **0.031 / 0** (quiet 83 %) | 0.000 | 0.029 |
+| mode select 14-17 s | 0.297 / 0.27 % | **0.127 / 0.01 %** | 0.161 | 0.126 |
+| char select 18-26 s | 0.439 / 1.62 % | **0.245 / 0.09 %** | 0.189 | 0.130 |
+| prologue 27-31 s | 0.435 / 1.84 % | **0.156 / 0 %** | 0.195 | 0.118 |
+| fight 34-58 s | 0.616 / 8.60 % | **0.193 / 0.01 %** | 0.164 | 0.170 |
+
+- **Menu presses now play short sounds that end.** Title/menu sections are 80-86 % quiet between presses. With
+  `TEKKEN4_SOUND_VOICES=1` (`logs\voices1`) no voice is still sounding at the 5/10/15/20/25 s checks; before,
+  one more voice was left at every check, from every press. In the fight, only the stage's looping stereo pair
+  (core 1 voices 0/1, panned hard L/R, volume moving) and short hit/voice sounds remain.
+- **The fight no longer clips:** 0.01 % (before 8.6 %), and the full-mix rms fell from 0.62 to 0.19-0.21. A second
+  full run (`music_v2b_fix_full`) gives the same: 0.023/0.127/0.245/0.154/0.205.
+- **Music is audible over the effects:** the music alone is as loud as the effects alone in the fight (0.164 vs
+  0.170) and louder in char select (0.189 vs 0.130). Before, it was at most a third of the drone level.
+  (`music_v2b_fix_fx` is left out: its movie-skip press missed and its timeline is shifted.)
+- **FPS** (fight, perf seconds 36-58): 56.5 (`music_v2a`) and 55.0 (`music_v2b`), the same range as before.
+  The machine is still not reaching a clean 60 tonight in any variant (see above).
+- **Tests:** IOP tests 18/18 + smoke/import, ps2x_tests 482/482 (tree D:\tekken4-fork-music at `e3349b1`).

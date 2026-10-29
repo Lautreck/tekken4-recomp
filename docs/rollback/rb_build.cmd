@@ -11,6 +11,5 @@ for %%F in (tekken4_overrides.cpp tekken4_frameshot_overrides.cpp tekken4_profil
   git -C D:\tekken4-recomp show HEAD:runtime/%%F > "%STG%\%%F"
   fc /b "%STG%\%%F" "%RUN%\%%F" >nul || copy /y "%STG%\%%F" "%RUN%\%%F" >nul
 )
-rem The rollback driver sits in runtime\rollback\ (not staged into other trees until patch 33 is in patches\).
-copy /y D:\tekken4-recomp\runtime\rollback\tekken4_rollback_overrides.cpp "%RUN%\" >nul
+rem The rollback driver is a normal runtime\ override since patches 37-40 are in patches\ (stage_generated copies it).
 call D:\tekken4-recomp\tools\build_runtime.cmd

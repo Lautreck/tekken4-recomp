@@ -147,6 +147,9 @@ seconds of `-Keys`. The fight starts at about frame 2000.
 
 ## Next steps (phase 2)
 
+Done 2026-10-29: see `docs/ROLLBACK_PHASE2.md` (cuts, IOP gate with sound replay, idle loop, selfnet harness;
+the rollback commits are exported as `docs/rollback/patches/37..40`, since 33-36 are now the music patches).
+
 1. Turn `0dc98d9` into `patches/33-ps2xRuntime-rollback-hooks.patch` (`git -C D:\tekken4-fork-rb format-patch
    -1 0dc98d9`) and commit `runtime/tekken4_rollback_overrides.cpp` + this doc.
 2. Virtual-time re-simulation is already implicit (restored host deadlines are in the past, so resim frames run

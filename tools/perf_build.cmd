@@ -2,7 +2,7 @@
 rem Perf work build (docs\PERF.md): PS2Recomp worktree D:\tekken4-fork-perf (branch t4-perf), out\perf.
 rem Same as tools\build_runtime.cmd but WITHOUT applying patches\*.patch (t4-perf already holds 01-40 as commits plus
 rem the perf commits; build_runtime's "apply what does not reverse" check would re-apply additive patches there), and
-rem the shared overrides are staged from HEAD of D:\tekken4-recomp (like docs\rollback\rb_build.cmd), so other
+rem the shared overrides are staged from HEAD of D:\tekken4-us (like docs\rollback\rb_build.cmd), so other
 rem agents' uncommitted edits stay out.
 rem   tools\perf_build.cmd            stage + build
 rem   tools\perf_build.cmd nostage    build only

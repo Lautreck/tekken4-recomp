@@ -5,6 +5,6 @@ param([string]$Name, [string]$Keys = "", [string]$Shots = "40", [string]$Env = "
 $env:TEKKEN4_SRC = $Src; $env:TEKKEN4_BUILD_DIR = $Build
 if (-not $env:TEKKEN4_SOUND) { $env:TEKKEN4_SOUND = '0' }
 foreach ($kv in ($Env -split ';')) { if ($kv) { $k, $v = $kv -split '=', 2; Set-Item -Path "env:$k" -Value $v } }
-$dir = "D:\tekken4-recomp\logs\perf\rb\$Name"
-if ($Keys) { & powershell -NoProfile -ExecutionPolicy Bypass -File D:\tekken4-recomp\tools\run_capture.ps1 -RunDir $dir -Shots $Shots -Keys $Keys }
-else { & powershell -NoProfile -ExecutionPolicy Bypass -File D:\tekken4-recomp\tools\run_capture.ps1 -RunDir $dir -Shots $Shots }
+$dir = "D:\tekken4-us\logs\perf\rb\$Name"
+if ($Keys) { & powershell -NoProfile -ExecutionPolicy Bypass -File D:\tekken4-us\tools\run_capture.ps1 -RunDir $dir -Shots $Shots -Keys $Keys }
+else { & powershell -NoProfile -ExecutionPolicy Bypass -File D:\tekken4-us\tools\run_capture.ps1 -RunDir $dir -Shots $Shots }

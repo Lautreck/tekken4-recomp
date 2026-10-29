@@ -167,7 +167,7 @@ script passes the build id of `out\net\ps2xRuntime\t4net_build.txt`; another bui
 
 Two PCs (host's UDP port reachable, e.g. LAN; allow `ps2EntryRunner.exe` in the Windows firewall when asked):
 ```
-# PC 1 (host, Player 1), from D:\tekken4-recomp:
+# PC 1 (host, Player 1), from D:\tekken4-us:
 powershell -ExecutionPolicy Bypass -File tools\net_play.ps1 -Host -Port 7400
 # PC 2 (join, Player 2), the host's address:
 powershell -ExecutionPolicy Bypass -File tools\net_play.ps1 -Join 192.168.1.20 -Port 7400
@@ -185,7 +185,7 @@ $env:TEKKEN4_NET='host:7400'          # joiner: $env:TEKKEN4_NET='join:192.168.1
 $env:TEKKEN4_SOUND='1'; $env:TEKKEN4_NET_PAD='0'
 $env:TEKKEN4_NET_BUILD=(Get-Content D:\tekken4-fork-net\out\net\ps2xRuntime\t4net_build.txt).Split(' ')[0]
 mkdir D:\t4play\host; cd D:\t4play\host     # its own run dir = its own memory card
-& D:\tekken4-fork-net\out\net\ps2xRuntime\ps2EntryRunner.exe D:\tekken4-recomp\game\disc\SLUS_203.28
+& D:\tekken4-fork-net\out\net\ps2xRuntime\ps2EntryRunner.exe D:\tekken4-us\game\disc\SLUS_203.28
 ```
 Both games boot in step (the first 600 frames in lockstep: logo, intro movie), then play with rollback: Player 1
 picks VS BATTLE in the main menu, each player picks his character with his own controls (keyboard WASD + Z/X/C/V =

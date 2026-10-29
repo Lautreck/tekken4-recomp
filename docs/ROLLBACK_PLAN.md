@@ -64,7 +64,7 @@ per logical frame, T5's transport and GGPO loop ported. Everything else follows 
 ## 2. T5DR mechanisms and their T4 mapping
 
 For each: T5DR what/where, T4 mapping, easier/harder, files to touch. Fork paths relative to
-`ps2xRuntime/`; game paths relative to `D:\tekken4-recomp`.
+`ps2xRuntime/`; game paths relative to `D:\tekken4-us`.
 
 ### M1. State set definition, exclusions, masks
 - T5DR: `kSave` (6 ranges), `kExclude` (async-thread areas), `kHashExclude`, `kMask`, `kKeepLive` byte ranges

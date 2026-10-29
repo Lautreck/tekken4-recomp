@@ -2,6 +2,13 @@
 
 Static recompilation of Tekken 4 (PS2) to a native Windows executable using PS2Recomp.
 
+## Folders on the user's PC (since 2026-10-29)
+- `D:\tekken4-us` = git worktree of branch `us-slus20328` (the US build): work here. It holds the US data too
+  (game\, external\, ghidra\, logs\, generated\, the ISO).
+- `D:\tekken4-recomp` = the main checkout on `master` (PAL, the colleague's line); no game data there.
+- PS2Recomp: `D:\tekken4-fork-ps2recomp` branch `t4-us` (= ..\tekken4-fork-ps2recomp from both folders);
+  agents' worktrees `D:\tekken4-fork-{rb,music,net,perf}` are merged into t4-us.
+
 ## Target (branch us-slus20328, since 2026-10-29; `master` keeps the PAL build)
 - Tekken 4, NTSC-U (USA), v1.00, serial SLUS-20328 (US frame data; one DATA.BIN, no PAL60 menu)
 - Main ELF: `game/disc/SLUS_203.28` (SHA-1 `a4b7dde20a2918c550badd127a245db155c36815`, CRC32 `0xB975F704`)

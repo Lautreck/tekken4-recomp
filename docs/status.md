@@ -79,7 +79,13 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
     Arena seconds 75-102 all 60, GS 317 ms (was 37 fps, 605 ms; logs/arena_hash1); airport 60, GS 130 (was 223;
     logs/airport_hash1); frames differ only on the idle-animated fighters/crowd; tests 482/482.
     So every stage is now 60 fps in the fixed fight.
-  - **Grok running:** **music-4** (docs/ai/prompts/music-4.md, wt-music, 300 turns): music-3 refuted the wrong
+  - **music-4 ended out of turns (01:44) with no notes / final JSON.** Its SIF user-command round trip works
+    (EE cid 0 -> IOP 0x4f4f4 -> cid 2/1 replies) and stays in wt-music, but the wav is unchanged in all 8 runs
+    (music4-8 even went silent). New lead from music4-7/stderr.txt: the IOP reads the music from disc (sceCdRead
+    64 sectors alternately into 0xc8000 / 0x108000, 7 reads then stops) but the SPU ring 0xc7000 only ever gets
+    silent ADPCM loop blocks (refills nonzero=3). **music-5 running** (docs/ai/prompts/music-5.md, 300 turns,
+    notes required as it goes): find the copy disc buffer -> ring and its gate.
+  - (earlier) **Grok running:** **music-4** (docs/ai/prompts/music-4.md, wt-music, 300 turns): music-3 refuted the wrong
     thing; the SDK copies the sceSifSendCmd extra payload by SIF DMA, and the chain is a handshake (EE cid 0 ->
     IOP handler 0x4f4f4 -> 0x49620 -> IOP cid 2 reply -> EE clears guard 0x1ccd400). Broken links: RPC.cpp
     sceSifSendCmd reads dest/size from the stack (EABI: t0/t1) and copies into EE RAM; IOP sifcmd ordinal 10

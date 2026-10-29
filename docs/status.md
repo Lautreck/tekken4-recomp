@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-10-29 08:17 (session 7)_
+_Last updated: 2026-10-29 08:26 (session 7)_
 
 ## Resume here
 To continue, open Claude Code in this folder and say: "read docs/status.md and continue".
@@ -109,6 +109,11 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
     external/wt-stage-pick, 200 turns: closed-loop stage select in run_fixed_fight) running; spu2-irq
     (docs/ai/prompts/spu2-irq.md, tree external/wt-spu2-irq, 250 turns: verify patch 36's IRQ-enable workaround
     against PCSX2) queued by grok_chain.ps1 (logs/grok/chain-spu2-irq.log). Review both when done.
+    **stage-pick ended 07:47 out of time (hung_exit, no final JSON); work reviewed + committed 52ec052:**
+    run_capture.ps1 -StagePick (on-demand frames via TEKKEN4_FRAME_SHOT_POLL, Cross >= 7 s after the card
+    settles, exit 2 on failure). Claude's 4 runs: airport/underground/beach right, arena exit 2 because the TIMED
+    menu keys before the card picked TEKKEN FORCE (open loop; next: closed-loop menu navigation). Launchers now set
+    PS2X_DEBUG_PANEL=0 instead of pressing F1. **spu2-irq running since 07:47** (pid 122448).
   - **GRAPHICS GOAL (user 2026-10-29: "all" of higher resolution, widescreen 16:9, smoothing/filtering, in-game
     settings menu).** Survey (subagent): PS2X_GS_HW_SCALE already scales the GS hw backend (createTarget, vertices,
     viewport/scissor), but >1x breaks after it: rtUploadTarget refuses scale != 1 (movie upload goes black),

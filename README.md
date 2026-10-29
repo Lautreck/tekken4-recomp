@@ -18,10 +18,10 @@ US build (SLUS-20328), 2026-10-29:
 | Function map (headless Ghidra, 4454 + 359 functions), 40 jump tables, recompiles with 0 errors | done |
 | Boot, Namco logo, intro movie, difficulty, mode select, character select, Story prologue | done |
 | A fight (Story Battle, Kazuya vs Paul), native VU1, OpenGL renderer, full speed (60 fps) | done |
-| Sound (real Namco driver on the emulated IOP) | runs; host audio output to be confirmed by a player |
-| Other modes, long sessions | being tested |
-| One-step build from the player's own ISO (no BIOS) | in progress |
-| Rollback online (as T5DR Online) | planned, see docs/ROLLBACK_PLAN.md |
+| Sound incl. background music (real Namco driver on the emulated IOP) | done (WAV-verified; to be confirmed by ear) |
+| Other modes, long sessions | done (QA: all modes, 7-min run) |
+| One-step build from the player's own ISO (no BIOS): toolsbuild_game.ps1 | done (dry-run tested) |
+| Rollback netplay (GGPO-style, UDP, build id, hash checks) | works between two local instances, 0 desyncs; lobby integration next |
 
 The PAL build (`master`) reached all of the above earlier; its log is in [docs/status.md](docs/status.md).
 

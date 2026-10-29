@@ -1,8 +1,28 @@
 # Status
 
-_Last updated: 2026-10-29 (US port session)_
+_Last updated: 2026-10-29 ~06:30 (US port + rollback night)_
 
 ## Resume here
+- **END OF THE US/ROLLBACK NIGHT (2026-10-29 ~06:30), RESTART HERE.** Main line = branch us-slus20328, patches 01-56
+  (PS2Recomp branch t4-us in D:\tekken4-fork-ps2recomp = eb8688b + 01-56 as commits). All pushed. Done tonight:
+  - QA (logs\qa\REPORT.md): Story, Arcade, Team, Survival, Practice, Training, Tekken Force, Options work; VS needs pad 2;
+    7-min stability run clean.
+  - Sound (docs\MUSIC_FIX.md, patches 33-36): BGM plays (SPU2 IRQ to libsd's handler; SIF cmd payloads to IOP RAM);
+    banks/BGM from the right sectors (cdvd/ioman search the real ISO, DATA.BIN LBN 401): voices end, no clipping.
+  - One-step build from the player's ISO, no BIOS: tools\build_game.ps1 (+ iso_extract.py, vu1_micro_from_elf.py:
+    VU1 micro image rebuilt from .vudata, SHA-256 checked). Only dry-run tested end to end.
+  - Rollback (docs\ROLLBACK_PLAN.md, ROLLBACK_PHASE01.md, PHASE2.md, PHASE3.md; patches 37-42; runtime\
+    tekken4_rollback_overrides.cpp, tekken4_net.{h,cpp}): deterministic (no masks), snapshot/restore 1.2 ms, resim
+    5.2 ms/frame with draw/VU1 cuts, whole IOP in the snapshot (sound-on deterministic), two-process UDP netplay with
+    GGPO rollback, build-id handshake, input delay by ping, hash exchange every 30 frames: 0 desyncs at RTT 0/50/150 ms
+    with 3 % loss (two instances on one PC). Human test: tools\net_play.ps1 (-Host / -Join <ip>, -Pad, -Sim).
+  - Performance (docs\PERF.md, patches 43-56): 9 of 10 stages at 60 fps in Practice (Arena 30 -> 60); Building ~57
+    (game-thread bound). Rollback self-test still 0 mismatches.
+  Next: (1) a human test on two PCs / real WAN (tools\net_play.ps1); (2) phase 4 = lobby integration with the T5DR
+  server (game id, T4 fighter/stage tables, separate ranking; touches TheWishin/T5DROnline-Source: only with the user's
+  go-ahead); direct fight (skip menus), fixed online save; (3) Building stage to 60; (4) T5DR-level polish (replays,
+  spectating, training rooms, launcher); (5) a real end-to-end run of tools\build_game.ps1 on a clean folder.
+  Worktrees D:\tekken4-fork-rb / -music / -net / -perf hold the agents' branches (all merged into t4-us).
 - **US BUILD SLUS-20328 (2026-10-29, branch us-slus20328), RESTART HERE.** User switched to the US game (frame
   data; simpler build). Ported without the PAL ELF: headless Ghidra (tools\ghidra_headless.cmd, 4454 functions; PAL had
   4459), find_missing_functions adds 359; tools\map_pal_to_us.py aligns PAL/US function lists by size (4405 matched,

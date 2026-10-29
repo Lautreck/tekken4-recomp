@@ -70,6 +70,15 @@ To continue, open Claude Code in this folder and say: "read docs/status.md and c
     Not reproduced in hud_claude2/3 (HOST 60). At the time an elevated python (not ours, pid 107332) copied
     ~230 MB/s (F: 92-97 % busy); suspected disk/IO stall of the present thread (TEKKEN4_HUD_LOG fflush), unproven.
     Slow loads also shift run_fixed_fight's timed keys (hud_claude3 ended on the difficulty screen).
+  - **ARENA 60 FPS = patch 34** (fork 7cb1bed, from Grok arena-perf-2, logs/grok/arena-perf-2-final.json):
+    hashIndexedCoverage hashes only the pages an indexed texture reads; spanBlocks() (whole buffer width) changed
+    with every neighbour 16x16 CT32 upload, so the texture was fully re-decoded each frame (GSMem::ReadIndexRun
+    48.8 % of the GS thread). Grok's bindless per-vertex batching (+800 lines) is NOT taken: with
+    GOW_GS_HW_NOBINDLESS=1 on its exe the Arena fight is 60.0 fps and GS 260 ms vs 367-395 with bindless
+    (logs/arena_nobindless1). Port adds the "0 = never revalidated" wrap guard. Default build:
+    Arena seconds 75-102 all 60, GS 317 ms (was 37 fps, 605 ms; logs/arena_hash1); airport 60, GS 130 (was 223;
+    logs/airport_hash1); frames differ only on the idle-animated fighters/crowd; tests 482/482.
+    So every stage is now 60 fps in the fixed fight.
   - **Grok running:** **music-4** (docs/ai/prompts/music-4.md, wt-music, 300 turns): music-3 refuted the wrong
     thing; the SDK copies the sceSifSendCmd extra payload by SIF DMA, and the chain is a handshake (EE cid 0 ->
     IOP handler 0x4f4f4 -> 0x49620 -> IOP cid 2 reply -> EE clears guard 0x1ccd400). Broken links: RPC.cpp
